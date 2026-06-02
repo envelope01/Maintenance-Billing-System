@@ -1,0 +1,6 @@
+streamlit
+pandas
+docxtpl
+pypdf
+openpyxl
+lxml
