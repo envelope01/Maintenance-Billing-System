@@ -1,0 +1,5 @@
+# Ignore the entire .vscode configuration folder
+.vscode/
+
+# Ignore any settings.json file specifically (if it sits outside .vscode)
+settings.json
