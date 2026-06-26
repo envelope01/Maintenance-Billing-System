@@ -1,5 +1,13 @@
-# Ignore the entire .vscode configuration folder
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+
+# Streamlit secrets
+.streamlit/secrets.toml
+
+# VS Code
 .vscode/
 
-# Ignore any settings.json file specifically (if it sits outside .vscode)
-settings.json
+# Temporary files
+temp_bills/

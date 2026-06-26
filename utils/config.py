@@ -1,0 +1,40 @@
+REQUIRED_COLUMNS = [
+    "Month & Year",
+    "Name",
+    "Room No",
+    "Bill No",
+    "Service M Chrg.",
+    "Sinking Fund",
+    "Repair & Maintenance",
+    "Edu.",
+    "NOC",
+    "Parking",
+    "Other",
+    "Extra Charges",
+    "Regular Dues",
+    "Previous dues",
+    "Late Chrg / Penalty",
+    "Adjustment",
+    "Balance Advance",
+    "Total Dues"
+]
+
+MAPPING = {
+    "Name": "Name",
+    "Room No": "Room_No",
+    "Bill No": "Bill_No",
+    "Service M Chrg.": "Service_M_Chrg",
+    "Sinking Fund": "Sinking_Fund",
+    "Repair & Maintenance": "Repair__Maintenance",
+    "Edu.": "Edu",
+    "NOC": "NOC",
+    "Parking": "Parking_",
+    "Extra Charges": "Extra_Charges",
+    "Other": "Other_",
+    "Regular Dues": "Regular_Dues",
+    "Previous dues": "Previous_dues",
+    "Late Chrg / Penalty": "Late_Chrg__Panelty",
+    "Adjustment": "Adjustment",
+    "Balance Advance": "Balance_Advance",
+    "Total Dues": "Total_Dues"
+}

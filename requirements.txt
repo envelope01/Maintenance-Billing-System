@@ -1,6 +1,6 @@
 streamlit
 pandas
-docxtpl
-pypdf
 openpyxl
-lxml
+docxtpl
+PyPDF2
+python-docx
