@@ -1,6 +1,10 @@
 streamlit
+streamlit-gsheets
 pandas
+numpy
 openpyxl
 docxtpl
 PyPDF2
 python-docx
+pywin32
+pdfplumber
