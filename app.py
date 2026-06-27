@@ -3,6 +3,13 @@ from streamlit_gsheets import GSheetsConnection
 import pandas as pd
 
 from utils.generator import generate_monthly_bills
+from utils.reconciler import (
+    extract_bank_statement,
+    map_bank_to_rooms,
+    generate_reconciliation_report
+)
+
+from utils.helpers import get_statement_month
 
 st.set_page_config(
     page_title="Maintenance Billing System", page_icon="🏢", layout="wide"
@@ -115,4 +122,116 @@ with tab2:
 with tab3:
 
     st.header("Payment Tracker")
-    st.info("Coming Soon")
+    st.caption("Upload Bank Statement and Verify Maintenance Payments")
+
+    uploaded_statement = st.file_uploader(
+        "Upload Bank Statement (PDF)",
+        type=["pdf"]
+    )
+
+    if uploaded_statement is not None:
+        
+        if st.button(
+            "Generate Reconciliation Report",
+            type="primary",
+            use_container_width=True
+        ):
+
+            with st.spinner("Analyzing Bank Statement..."):
+
+                # Detect Statement Month
+                statement_month = get_statement_month(
+                    uploaded_statement
+                )
+
+                month_name = pd.to_datetime(
+                    statement_month,
+                    dayfirst=True
+                ).strftime("%B %Y")
+
+                st.caption(
+                    f"Statement Month Detected : {month_name}"
+                )
+
+                # Extract Transactions
+                raw_bank_df = extract_bank_statement(
+                    uploaded_statement
+                )
+
+                # Match Transactions
+                grouped_payments, unmapped_df = map_bank_to_rooms(
+                    raw_bank_df,
+                    master_df
+                )
+
+                # Filter Ledger
+                month_ledger = ledger_df[
+                    ledger_df["Month & Year"] == statement_month
+                ].copy()
+
+                if month_ledger.empty:
+
+                    st.error(
+                        f"No ledger found for {month_name}."
+                    )
+
+                    st.stop()
+
+                # Generate Report
+                report_df = generate_reconciliation_report(
+                    grouped_payments,
+                    master_df,
+                    month_ledger
+                )
+
+            st.toast("Reconciliation completed successfully.")
+
+            # -------------------------------------------------
+            # Summary
+            # -------------------------------------------------
+
+            paid = (
+                report_df["Status"] == "Paid"
+            ).sum()
+
+            partial = (
+                report_df["Status"] == "Partially Paid"
+            ).sum()
+
+            unpaid = (
+                report_df["Status"] == "Unpaid"
+            ).sum()
+
+            col1, col2, col3 = st.columns(3)
+
+            col1.metric("Paid", paid)
+            col2.metric("Partial", partial)
+            col3.metric("Unpaid", unpaid)
+
+            st.divider()
+
+            # -------------------------------------------------
+            # Report
+            # -------------------------------------------------
+
+            st.subheader("Reconciliation Report")
+
+            st.dataframe(
+                report_df,
+                use_container_width=True
+            )
+
+            st.divider()
+
+            # -------------------------------------------------
+            # Unmatched Transactions
+            # -------------------------------------------------
+
+            if not unmapped_df.empty:
+
+                st.subheader("Unmatched Transactions")
+
+                st.dataframe(
+                    unmapped_df,
+                    use_container_width=True
+                )

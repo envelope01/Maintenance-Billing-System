@@ -13,6 +13,10 @@ def extract_bank_statement(pdf_file):
                 all_rows.extend(table_data)
 
     # 2. Convert to DataFrame
+    if not all_rows:
+        raise ValueError(
+            "No transaction table found in the uploaded statement."
+        )
     df = pd.DataFrame(all_rows)
 
     # 3. Promote header
@@ -44,87 +48,209 @@ def extract_bank_statement(pdf_file):
 
 
 
-def map_bank_to_rooms(raw_bank_df, mapping_sheet_df):
-    # 1. Smart Column Detection (Taki Exact spelling ka lafda na rahe)
-    mapping_sheet_df.columns = mapping_sheet_df.columns.astype(str).str.strip().str.lower()
-    
-    t_col = [c for c in mapping_sheet_df.columns if 'transaction' in c][0]
-    r_col = [c for c in mapping_sheet_df.columns if 'room' in c][0]
-    
+def map_bank_to_rooms(raw_bank_df, master_df):
+
+    # -----------------------------
+    # Clean Master Data
+    # -----------------------------
+    master_df = master_df.copy()
+
+    master_df.columns = master_df.columns.str.strip()
+
+    master_df["Bank_Mapping_ID"] = (
+        master_df["Bank_Mapping_ID"]
+        .astype(str)
+        .str.upper()
+        .str.strip()
+    )
+
+    master_df["Room No"] = (
+        master_df["Room No"]
+        .astype(str)
+        .str.strip()
+    )
+
+    # -----------------------------
+    # Create Mapping Dictionary
+    # -----------------------------
     mapping_dict = {}
-    for _, row in mapping_sheet_df.iterrows():
-        t_val = row[t_col]
-        r_val = row[r_col]
-        
-        # Skip empty rows
-        if pd.isna(t_val) or str(t_val).strip() == '':
+
+    for _, row in master_df.iterrows():
+
+        bank_id = row["Bank_Mapping_ID"]
+
+        if (
+            bank_id in ["", "NAN", "NONE"]
+            or "#N/A" in bank_id
+        ):
             continue
-            
-        # FIX THE ".0" TRAP FOR TRANSACTION IDs
-        if isinstance(t_val, float) and t_val.is_integer():
-            t_str = str(int(t_val)).upper().strip()
-        else:
-            t_str = str(t_val).upper().strip()
-            
-        # FIX ROOM NO DATA TYPES (Ensure it's a clean string)
-        if isinstance(r_val, float) and r_val.is_integer():
-            r_str = str(int(r_val)).strip()
-        else:
-            r_str = str(r_val).strip()
-            
-        mapping_dict[t_str] = r_str
 
-    # 2. Find the match
+        mapping_dict[bank_id] = row["Room No"]
+
+
+    # -----------------------------
+    # Find Room from Description
+    # -----------------------------
     def find_room(description):
-        desc = str(description).upper()
-        for t_id, room in mapping_dict.items():
-            if t_id in desc:
-                return room
-        return np.nan # Strictly using np.nan for missing matches
 
-    raw_bank_df['Mapped_Room_No'] = raw_bank_df['Description'].apply(find_room)
-    
-    mapped_df = raw_bank_df.dropna(subset=['Mapped_Room_No']).copy()
-    unmapped_df = raw_bank_df[raw_bank_df['Mapped_Room_No'].isna()].copy()
-    
-    grouped_payments = mapped_df.groupby('Mapped_Room_No')['Credit'].sum().reset_index()
-    grouped_payments.rename(columns={'Mapped_Room_No': 'Room No', 'Credit': 'Total_Paid'}, inplace=True)
-    
+        desc = (
+            str(description)
+            .upper()
+            .replace("\n", " ")
+            .replace("\r", " ")
+        )
+
+        desc = " ".join(desc.split())
+
+        for bank_id, room in mapping_dict.items():
+
+            if bank_id in desc:
+                return room
+
+        return np.nan
+
+    raw_bank_df = raw_bank_df.copy()
+
+    raw_bank_df["Mapped_Room_No"] = (
+        raw_bank_df["Description"]
+        .apply(find_room)
+    )
+
+    mapped_df = raw_bank_df.dropna(
+        subset=["Mapped_Room_No"]
+    ).copy()
+
+    unmapped_df = raw_bank_df[
+        raw_bank_df["Mapped_Room_No"].isna()
+    ].copy()
+
+    grouped_payments = (
+        mapped_df
+        .groupby("Mapped_Room_No")["Credit"]
+        .sum()
+        .reset_index()
+    )
+
+    grouped_payments.rename(
+        columns={
+            "Mapped_Room_No": "Room No",
+            "Credit": "Total_Paid"
+        },
+        inplace=True
+    )
+
     return grouped_payments, unmapped_df
 
 
-def generate_reconciliation_report(grouped_payments, dues_df):
-    dues_df.columns = dues_df.columns.str.strip()
-    
-    # Ensure Room No in dues_df is EXACTLY the same format (clean string) as grouped_payments
-    def clean_room_no(val):
-        if pd.isna(val) or val is np.nan:
-            return np.nan
-        if isinstance(val, float) and val.is_integer():
-            return str(int(val)).strip()
-        return str(val).strip()
-        
-    dues_df['Room No'] = dues_df['Room No'].apply(clean_room_no)
-    grouped_payments['Room No'] = grouped_payments['Room No'].apply(clean_room_no)
-    
-    dues_df['Total Dues'] = pd.to_numeric(dues_df['Total Dues'], errors='coerce').fillna(0)
-    
-    report_df = pd.merge(
-        dues_df[['Room No', 'Name', 'Total Dues']], 
-        grouped_payments, 
-        on='Room No', 
-        how='left'
+def generate_reconciliation_report(
+    grouped_payments,
+    master_df,
+    ledger_df
+):
+
+    # -----------------------------
+    # Clean Data
+    # -----------------------------
+    master_df = master_df.copy()
+    ledger_df = ledger_df.copy()
+    grouped_payments = grouped_payments.copy()
+
+    master_df.columns = master_df.columns.str.strip()
+    ledger_df.columns = ledger_df.columns.str.strip()
+
+    master_df["Room No"] = (
+        master_df["Room No"]
+        .astype(str)
+        .str.strip()
     )
-    
-    report_df['Total_Paid'] = report_df['Total_Paid'].fillna(0)
-    
+
+    ledger_df["Room No"] = (
+        ledger_df["Room No"]
+        .astype(str)
+        .str.strip()
+    )
+
+    grouped_payments["Room No"] = (
+        grouped_payments["Room No"]
+        .astype(str)
+        .str.strip()
+    )
+
+    # -----------------------------
+    # Create Base Report
+    # -----------------------------
+    report_df = pd.merge(
+
+        master_df[
+            ["Room No", "Name"]
+        ],
+
+        ledger_df[
+            ["Room No", "Total Dues"]
+        ],
+
+        on="Room No",
+        how="inner"
+
+    )
+
+    # -----------------------------
+    # Merge Payments
+    # -----------------------------
+    report_df = pd.merge(
+
+        report_df,
+
+        grouped_payments,
+
+        on="Room No",
+
+        how="left"
+
+    )
+
+    report_df["Total_Paid"] = (
+        pd.to_numeric(
+            report_df["Total_Paid"],
+            errors="coerce"
+        )
+        .fillna(0)
+    )
+
+    report_df["Total Dues"] = (
+        pd.to_numeric(
+            report_df["Total Dues"],
+            errors="coerce"
+        )
+        .fillna(0)
+    )
+
+    # -----------------------------
+    # Difference
+    # -----------------------------
+    report_df["Difference"] = (
+        report_df["Total Dues"]
+        - report_df["Total_Paid"]
+    )
+
+    # -----------------------------
+    # Status
+    # -----------------------------
     def get_status(row):
-        if row['Total_Paid'] >= (row['Total Dues'] - 1):
-            return "Fully Paid"
-        elif row['Total_Paid'] > 0:
+
+        if row["Total_Paid"] >= row["Total Dues"]:
+
+            return "Paid"
+
+        elif row["Total_Paid"] > 0:
+
             return "Partially Paid"
-        else:
-            return "Unpaid"
-            
-    report_df['Status'] = report_df.apply(get_status, axis=1)
+
+        return "Unpaid"
+
+    report_df["Status"] = report_df.apply(
+        get_status,
+        axis=1
+    )
+
     return report_df
