@@ -56,7 +56,26 @@ tab1, tab2, tab3 = st.tabs(
 with tab1:
 
     st.header("Initialize Billing Month")
-    st.info("Coming Soon")
+    st.caption("Manage monthly billing records in Google Sheets.")
+
+    SHEET_URL = st.secrets["connections"]["gsheets"]["spreadsheet"]
+
+    st.link_button(
+        "📊 Open Google Sheets",
+        SHEET_URL,
+        use_container_width=True
+    )
+
+    st.button(
+        "Initialize New Month",
+        disabled=True,
+        use_container_width=True,
+        help="Coming soon"
+    )
+
+    st.info(
+        "Automatic month initialization will be available in a future update."
+    )
 
 # ============================================================
 # TAB 2
