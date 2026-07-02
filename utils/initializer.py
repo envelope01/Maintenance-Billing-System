@@ -43,51 +43,25 @@ def validate_initialization(current_month_df,ledger_df,next_month):
 
     }
 
-def prepare_new_month_dataframe(current_month_df,master_df,report_df,next_month):
+def prepare_new_month_dataframe(current_month_df, next_month):
     """
     Prepare next month's ledger using
     reconciliation report and master data.
     """
     current_month_df = current_month_df.copy()
-    master_df = master_df.copy()
-    report_df = report_df.copy()
 
     # -----------------------------
     # Clean Columns
     # -----------------------------
     current_month_df.columns = (current_month_df.columns.str.strip())
-    master_df.columns = (master_df.columns.str.strip())
-    report_df.columns = (report_df.columns.str.strip())
 
     # -----------------------------
     # Clean Room Numbers
     # -----------------------------
-    for df in [current_month_df,master_df,report_df]:
-        df["Room No"] = (df["Room No"].astype(str).str.strip())
+    current_month_df["Room No"] = (current_month_df["Room No"].astype(str).str.strip())
 
     df = current_month_df.copy()
 
-    # -----------------------------
-    # Merge Reconciliation Report
-    # -----------------------------
-    df = pd.merge(df,report_df[["Room No","Difference"]],on="Room No",how="left")
-
-    # -----------------------------
-    # Fill Missing Values
-    # -----------------------------
-    numeric_cols = [
-        "Service M Chrg.",
-        "Sinking Fund",
-        "Repair & Maintenance",
-        "Edu.",
-        "Other",
-        "NOC Charges",
-        "Parking Charges",
-        "Difference"
-    ]
-
-    for col in numeric_cols:
-        df[col] = pd.to_numeric(df[col],errors="coerce").fillna(0)
 
     # -----------------------------
     # Next Month
@@ -124,41 +98,6 @@ def prepare_new_month_dataframe(current_month_df,master_df,report_df,next_month)
         + df["Other"]
         + df["NOC Charges"]
         + df["Parking Charges"]
-    )
-
-    # -----------------------------
-    # Previous Dues
-    # -----------------------------
-    df["Previous dues"] = (df["Difference"].clip(lower=0))
-
-    # -----------------------------
-    # Recd Advance
-    # -----------------------------
-    df["Recd Advance"] = ((-df["Difference"]).clip(lower=0))
-
-    # -----------------------------
-    # Current Bill Amount
-    # -----------------------------
-    df["Current Bill Amt"] = (df["Regular Dues"]+ df["Late Chrg / Penalty"])
-
-    # -----------------------------
-    # Adjustment
-    # -----------------------------
-    df["Adjustment"] = df[["Recd Advance","Current Bill Amt"]].min(axis=1)
-
-    # -----------------------------
-    # Balance Advance
-    # -----------------------------
-    df["Balance Advance"] = (df["Recd Advance"] - df["Adjustment"])
-
-    # -----------------------------
-    # Total Dues
-    # -----------------------------
-    df["Total Dues"] = (
-        df["Regular Dues"]
-        + df["Previous dues"]
-        + df["Late Chrg / Penalty"]
-        - df["Adjustment"]
     )
 
     # -----------------------------

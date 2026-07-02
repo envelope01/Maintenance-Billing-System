@@ -7,11 +7,11 @@ def append_to_ledger(new_month_df):
 
     conn = st.connection("gsheets",type=GSheetsConnection)
 
-    ledger_df = conn.read(worksheet="testData",ttl=0)
+    ledger_df = conn.read(worksheet="Yearly_Ledger",ttl=0)
 
     updated_df = pd.concat([ledger_df, new_month_df],ignore_index=True)
 
-    conn.update(worksheet="testData",data=updated_df)
+    conn.update(worksheet="Yearly_Ledger",data=updated_df)
 
     return True
 
@@ -25,7 +25,7 @@ def update_status_to_sheet(report_df,statement_month):
 
     conn = st.connection("gsheets",type=GSheetsConnection)
 
-    ledger_df = conn.read(worksheet="testData",ttl=0)
+    ledger_df = conn.read(worksheet="Yearly_Ledger",ttl=0)
 
     ledger_df.columns = (ledger_df.columns.str.strip())
 
@@ -55,6 +55,6 @@ def update_status_to_sheet(report_df,statement_month):
 
     ledger_df.loc[mask,"Status"] = (ledger_df.loc[mask,"Room No"].map(status_lookup).fillna(ledger_df.loc[mask,"Status"]))
 
-    conn.update(worksheet="testData",data=ledger_df)
+    conn.update(worksheet="Yearly_Ledger",data=ledger_df)
 
     return True

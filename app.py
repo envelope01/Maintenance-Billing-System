@@ -1,82 +1,87 @@
+import pandas as pd
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
-import pandas as pd
 
 from utils.generator import generate_monthly_bills
+from utils.helpers import get_statement_month
+from utils.initializer import get_next_month, prepare_new_month_dataframe,validate_initialization
 from utils.reconciler import (
     extract_bank_statement,
+    generate_reconciliation_report,
     map_bank_to_rooms,
-    generate_reconciliation_report
+)
+from utils.sheets import (
+    append_to_ledger,
+    update_status_to_sheet
 )
 
-from utils.initializer import (
-    get_next_month,
-    prepare_new_month_dataframe
-)
-
-from utils.sheets import append_to_ledger
-from utils.helpers import get_statement_month
+# --------------------------------------------------
+# Page Configuration
+# --------------------------------------------------
 
 st.set_page_config(
-    page_title="Maintenance Billing System", page_icon="🏢", layout="wide"
+    page_title="Maintenance Billing System",
+    page_icon="🏢",
+    layout="wide"
 )
 
-# --------------------------
-# Load CSS
-# --------------------------
+# --------------------------------------------------
+# Load Styles
+# --------------------------------------------------
+
 try:
-    with open("assets/style.css") as f:
-        st.markdown(f"<style>{f.read()}</style>", unsafe_allow_html=True)
+    with open("assets/style.css") as css:
+        st.markdown(f"<style>{css.read()}</style>", unsafe_allow_html=True)
 except FileNotFoundError:
     pass
 
+# --------------------------------------------------
+# Application Header
+# --------------------------------------------------
+
 st.title("🏢 Maintenance Billing System")
-st.caption("Generate Monthly Maintenance Bills")
+st.caption("Society Maintenance Billing & Payment Management")
 
-# --------------------------
+# --------------------------------------------------
 # Session State
-# --------------------------
-if "report_df" not in st.session_state:
-    st.session_state.report_df = None
+# --------------------------------------------------
 
-if "new_month_df" not in st.session_state:
-    st.session_state.new_month_df = None
+DEFAULT_STATE = {
+    "report_df": None,
+    "raw_bank_df": None,
+    "grouped_payments": None,
+    "unmapped_df": None,
+    "statement_month": None,
+    "reconciliation_done": False,
+    "new_month_df": None,
+    "status_updated": False,
+    "validation": None,
+    "current_month_df": None,
+    "next_month": None,
+}
 
-if "statement_month" not in st.session_state:
-    st.session_state.statement_month = None
+for key, value in DEFAULT_STATE.items():
+    st.session_state.setdefault(key, value)
 
-if "next_month" not in st.session_state:
-    st.session_state.next_month = None
-
-if "month_exists" not in st.session_state:
-    st.session_state.month_exists = None
-
-if "reconciliation_done" not in st.session_state:
-    st.session_state.reconciliation_done = False
-
-# --------------------------
+# --------------------------------------------------
 # Google Sheets Connection
-# --------------------------
+# --------------------------------------------------
+
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
 
-    master_df = conn.read(worksheet="Master_Flats",
-    ttl=0)
-    # ledger_df = conn.read(worksheet="Yearly_Ledger")
-    ledger_df = conn.read(worksheet="testData",
-    ttl=0)
-
-    st.toast("✅ Google Sheets Connected")
+    master_df = conn.read(worksheet="Master_Flats", ttl=0)
+    ledger_df = conn.read(worksheet="Yearly_Ledger", ttl=0)
 
 except Exception as e:
-    st.error(f"Connection Failed\n\n{e}")
+    st.error(f"Google Sheets Connection Failed\n\n{e}")
     st.stop()
 
 # --------------------------
 # Tabs
 # --------------------------
 tab1, tab2, tab3 = st.tabs(
-    ["🗓️ Initialize Month", "📄 Generate Bills", "💰 Payment Tracker"]
+    ["📄 Generate Bills", "💳 Payment Tracker", "🗓️ Initialize Month"]
 )
 
 # ============================================================
@@ -85,271 +90,125 @@ tab1, tab2, tab3 = st.tabs(
 
 with tab1:
 
-    st.header("Initialize Billing Month")
-    st.caption(
-        "Create the next billing month after verifying the reconciliation report."
-    )
+    st.header("Generate Monthly Bills")
+    st.caption("Generate maintenance bills for a selected billing month.")
 
-    SHEET_URL = st.secrets["connections"]["gsheets"]["spreadsheet"]
+    available_months = ledger_df["Month & Year"].dropna().unique().tolist()
 
-    st.link_button(
-        "📊 Open Google Sheets",
-        SHEET_URL,
-        use_container_width=True
-    )
+    if not available_months:
+        st.warning("No billing months available.")
+        st.stop()
 
-    st.divider()
+    col1, col2 = st.columns([1, 2])
 
-    st.warning(
-        """
-        **Workflow**
+    with col1:
+        selected_month = st.selectbox(
+            "Billing Month",
+            available_months,
+            format_func=lambda x: pd.to_datetime(x, dayfirst=True).strftime("%B %Y")
+        )
 
-        1. Complete Payment Reconciliation.
-        2. Verify the report.
-        3. Initialize Next Month.
-        4. Review Google Sheet.
-        5. Generate Bills.
-        """
-    )
+    month_label = pd.to_datetime(selected_month, dayfirst=True).strftime("%B %Y")
+    default_name = f"{month_label} Dues"
 
-    initialize_btn = st.button(
-        "🚀 Initialize Next Month",
-        disabled=True,
-        use_container_width=True
-    )
+    with col2:
+        output_filename = st.text_input(
+            "Output File Name",
+            value=default_name
+        )
 
-    st.caption(
-        "This button will automatically activate after a successful reconciliation."
-    )
+    if st.button("Generate Bills", type="primary"):
+
+        with st.spinner("Generating PDF bills..."):
+            pdf_file = generate_monthly_bills(
+                master_df,
+                ledger_df,
+                selected_month
+            )
+
+        if pdf_file is None:
+            st.error("No bills found for the selected month.")
+        else:
+            st.toast("Bills generated successfully.")
+
+            st.download_button(
+                "⬇ Download PDF",
+                data=pdf_file,
+                file_name=f"{output_filename}.pdf",
+                mime="application/pdf"
+            )
+
+
 # ============================================================
 # TAB 2
 # ============================================================
 
 with tab2:
 
-    st.header("Generate Monthly Bills")
-
-    available_months = ledger_df["Month & Year"].dropna().unique().tolist()
-
-    if len(available_months) == 0:
-        st.warning("No Months Found.")
-        st.stop()
-
-    col1, col2 = st.columns(2)
-
-    with col1:
-
-        selected_month = st.selectbox("Select Billing Month", available_months)
-
-    with col2:
-        try:
-            month_name = pd.to_datetime(
-                selected_month,
-                dayfirst=True
-            ).strftime("%B")
-        except Exception:
-            month_name = str(selected_month)
-
-        default_name = f"{month_name} Dues"
-
-        output_filename = st.text_input("Output PDF Name", value=default_name)
-
-    st.divider()
-
-    if st.button("Generate Bills", type="primary", use_container_width=True):
-
-        with st.spinner("Generating Bills..."):
-
-            pdf_file = generate_monthly_bills(master_df, ledger_df, selected_month)
-
-        if pdf_file is None:
-
-            st.error("No Bills Found.")
-
-        else:
-
-            st.success("Bills Generated Successfully")
-
-            st.download_button(
-                "⬇ Download PDF",
-                data=pdf_file,
-                file_name=f"{output_filename}.pdf",
-                mime="application/pdf",
-                use_container_width=True,
-            )
-
-# ============================================================
-# TAB 3
-# ============================================================
-
-with tab3:
-
     st.header("Payment Tracker")
-    st.caption(
-        "Upload Bank Statement and Verify Maintenance Payments"
-    )
+    st.caption("Upload a bank statement to reconcile online maintenance payments.")
 
     uploaded_statement = st.file_uploader(
-        "Upload Bank Statement (PDF)",
+        "Bank Statement (PDF)",
         type=["pdf"]
     )
 
-    if uploaded_statement is not None:
+    if uploaded_statement and st.button("Generate Reconciliation", type="primary"):
 
-        if st.button(
-            "Generate Reconciliation Report",
-            type="primary",
-            use_container_width=True
-        ):
+        with st.spinner("Analyzing bank statement..."):
 
-            with st.spinner(
-                "Analyzing Bank Statement..."
-            ):
+            statement_month = get_statement_month(uploaded_statement)
+            month_name = pd.to_datetime(statement_month, dayfirst=True).strftime("%B %Y")
 
-                # ---------------------------------
-                # Detect Statement Month
-                # ---------------------------------
-                statement_month = get_statement_month(
-                    uploaded_statement
-                )
+            raw_bank_df = extract_bank_statement(uploaded_statement)
 
-                month_name = pd.to_datetime(
-                    statement_month,
-                    dayfirst=True
-                ).strftime("%B %Y")
-
-                # ---------------------------------
-                # Extract Bank Statement
-                # ---------------------------------
-                raw_bank_df = extract_bank_statement(
-                    uploaded_statement
-                )
-
-                # ---------------------------------
-                # Map Payments
-                # ---------------------------------
-                grouped_payments, unmapped_df = (
-                    map_bank_to_rooms(
-                        raw_bank_df,
-                        master_df
-                    )
-                )
-
-                # ---------------------------------
-                # Ledger for Statement Month
-                # ---------------------------------
-                month_ledger = ledger_df[
-                    ledger_df["Month & Year"] == statement_month
-                ].copy()
-
-                if month_ledger.empty:
-
-                    st.error(
-                        f"No ledger found for {month_name}."
-                    )
-
-                    st.stop()
-
-                # ---------------------------------
-                # Reconciliation
-                # ---------------------------------
-                report_df = (
-                    generate_reconciliation_report(
-                        grouped_payments,
-                        master_df,
-                        month_ledger
-                    )
-                )
-
-                # ---------------------------------
-                # Save Session
-                # ---------------------------------
-                st.session_state.statement_month = (
-                    statement_month
-                )
-
-                st.session_state.report_df = (
-                    report_df
-                )
-
-                st.session_state.raw_bank_df = (
-                    raw_bank_df
-                )
-
-                st.session_state.grouped_payments = (
-                    grouped_payments
-                )
-
-                st.session_state.unmapped_df = (
-                    unmapped_df
-                )
-
-                st.session_state.reconciliation_done = (
-                    True
-                )
-
-            st.toast(
-                "Reconciliation completed successfully."
+            grouped_payments, unmapped_df = map_bank_to_rooms(
+                raw_bank_df,
+                master_df
             )
 
-    # -------------------------------------------------
-    # Show Saved Reconciliation
-    # -------------------------------------------------
+            month_ledger = ledger_df[
+                ledger_df["Month & Year"] == statement_month
+            ].copy()
+
+            if month_ledger.empty:
+                st.error(f"No ledger found for {month_name}.")
+                st.stop()
+
+            report_df = generate_reconciliation_report(
+                grouped_payments,
+                master_df,
+                month_ledger
+            )
+
+            st.session_state.statement_month = statement_month
+            st.session_state.report_df = report_df
+            st.session_state.raw_bank_df = raw_bank_df
+            st.session_state.grouped_payments = grouped_payments
+            st.session_state.unmapped_df = unmapped_df
+            st.session_state.reconciliation_done = True
+
+        st.toast("Reconciliation completed successfully.")
 
     if st.session_state.reconciliation_done:
 
         report_df = st.session_state.report_df
-
         raw_bank_df = st.session_state.raw_bank_df
+        grouped_payments = st.session_state.grouped_payments
+        unmapped_df = st.session_state.unmapped_df
+        statement_month = st.session_state.statement_month
 
-        grouped_payments = (
-            st.session_state.grouped_payments
-        )
+        month_name = pd.to_datetime(statement_month, dayfirst=True).strftime("%B %Y")
 
-        unmapped_df = (
-            st.session_state.unmapped_df
-        )
+        st.info(f"Statement Month : {month_name}")
 
-        statement_month = (
-            st.session_state.statement_month
-        )
+        paid = (report_df["Status"] == "Paid").sum()
+        partial = (report_df["Status"] == "Partially Paid").sum()
+        unpaid = (report_df["Status"] == "Unpaid").sum()
 
-        month_name = pd.to_datetime(
-            statement_month,
-            dayfirst=True
-        ).strftime("%B %Y")
-
-        st.info(
-            f"Statement Month : {month_name}"
-        )
-
-        # ---------------------------------
-        # Summary
-        # ---------------------------------
-
-        paid = (
-            report_df["Status"] == "Paid"
-        ).sum()
-
-        partial = (
-            report_df["Status"] == "Partially Paid"
-        ).sum()
-
-        unpaid = (
-            report_df["Status"] == "Unpaid"
-        ).sum()
-
-        total_credit = (
-            raw_bank_df["Credit"].sum()
-        )
-
-        matched_credit = (
-            grouped_payments["Total_Paid"].sum()
-        )
-
-        unmatched_credit = (
-            unmapped_df["Credit"].sum()
-        )
+        total_credit = raw_bank_df["Credit"].sum()
+        matched_credit = grouped_payments["Total_Paid"].sum()
+        unmatched_credit = unmapped_df["Credit"].sum()
 
         difference = total_credit - (
             matched_credit + unmatched_credit
@@ -357,68 +216,49 @@ with tab3:
 
         col1, col2, col3 = st.columns(3)
 
-        col1.metric(
-            "Paid",
-            paid
-        )
-
-        col2.metric(
-            "Partial",
-            partial
-        )
-
-        col3.metric(
-            "Unpaid",
-            unpaid
-        )
+        col1.metric("Paid", paid)
+        col2.metric("Partial", partial)
+        col3.metric("Unpaid", unpaid)
 
         st.divider()
+    
+        st.subheader("Payment Summary")
 
-        st.subheader(
-            "Payment Summary"
+        st.caption(
+            "Only online payments are reconciled automatically. Cash payments must be verified manually."
         )
 
-        c1, c2, c3 = st.columns(3)
+        col1, col2, col3 = st.columns(3)
 
-        c1.metric(
+        col1.metric(
             "Total Credits",
             f"₹{total_credit:,.0f}"
         )
 
-        c2.metric(
+        col2.metric(
             "Matched Credits",
             f"₹{matched_credit:,.0f}"
         )
 
-        c3.metric(
+        col3.metric(
             "Unmatched Credits",
             f"₹{unmatched_credit:,.0f}"
         )
 
-        if difference != 0:
-
-            st.warning(
-                f"₹{difference:,.0f} could not be reconciled."
-            )
-
         st.divider()
 
-        st.subheader(
-            "Reconciliation Report"
-        )
+        st.subheader("Reconciliation Report")
 
         st.dataframe(
             report_df,
             use_container_width=True
         )
 
+        st.divider()
+
         if not unmapped_df.empty:
 
-            st.divider()
-
-            st.subheader(
-                "Unmatched Transactions"
-            )
+            st.subheader("Unmatched Transactions")
 
             st.dataframe(
                 unmapped_df,
@@ -427,4 +267,147 @@ with tab3:
 
             st.divider()
 
-        
+        if difference != 0:
+
+            st.warning(
+                f"₹{difference:,.0f} could not be reconciled."
+            )
+
+        if st.button(
+            "📤 Update Status",
+            type="primary"
+        ):
+
+            update_status_to_sheet(
+                report_df,
+                statement_month
+            )
+
+            st.session_state.status_updated = True
+
+            st.toast(
+                "Online payment statuses updated successfully."
+            )
+
+        if st.session_state.status_updated:
+
+            st.success(
+                "Online payment statuses have been updated."
+            )
+
+            st.link_button(
+                "📊 Open Google Sheets",
+                st.secrets["connections"]["gsheets"]["spreadsheet"]
+            )
+
+            st.caption(
+                "Verify cash payments in Google Sheets, then return to the Initialize Billing Month tab."
+            )
+
+
+# ============================================================
+# TAB 3
+# ============================================================
+
+with tab3:
+    st.header("Initialize Billing Month")
+    st.caption("Create the next billing cycle after all payment statuses are verified.")
+
+    available_months = ledger_df["Month & Year"].dropna().unique().tolist()
+
+    selected_month = st.selectbox(
+        "Current Billing Month",
+        available_months,
+        format_func=lambda x: pd.to_datetime(x, dayfirst=True).strftime("%B %Y")
+    )
+
+    if st.button("Validate", type="primary"):
+
+        current_month_df = ledger_df[
+            ledger_df["Month & Year"] == selected_month
+        ].copy()
+
+        next_month = get_next_month(selected_month)
+
+        validation = validate_initialization(
+            current_month_df,
+            ledger_df,
+            next_month
+        )
+
+        st.session_state.validation = validation
+        st.session_state.current_month_df = current_month_df
+        st.session_state.next_month = next_month
+
+    if st.session_state.validation is not None:
+
+        validation = st.session_state.validation
+
+        st.divider()
+
+        st.subheader("Validation Summary")
+
+        col1, col2 = st.columns(2)
+
+        with col1:
+
+            if validation["blank_status"] == 0:
+                st.success("All payment statuses are updated.")
+            else:
+                st.error(
+                    f"{validation['blank_status']} flats have blank status."
+                )
+
+        with col2:
+
+            if validation["month_exists"]:
+                st.error("Next month already exists.")
+            else:
+
+                month_name = pd.to_datetime(
+                    st.session_state.next_month,
+                    dayfirst=True
+                ).strftime("%B %Y")
+
+                st.success(
+                    f"{month_name} is ready to initialize."
+                )
+
+        if validation["valid"]:
+
+            new_month_df = prepare_new_month_dataframe(
+                st.session_state.current_month_df,
+                st.session_state.next_month
+            )
+
+            st.session_state.new_month_df = new_month_df
+
+            st.divider()
+
+            st.subheader("Next Month Preview")
+
+            st.dataframe(
+                new_month_df,
+                use_container_width=True,
+                hide_index=True
+            )
+
+            st.caption(
+                "Please verify all cash payments in Google Sheets before initializing the next billing month."
+            )
+
+            if st.button(
+                "🚀 Initialize Month",
+                type="primary"
+            ):
+
+                append_to_ledger(
+                    st.session_state.new_month_df
+                )
+                st.session_state.validation = None
+
+                st.toast(
+                    f"{pd.to_datetime(st.session_state.next_month, dayfirst=True).strftime('%B %Y')} initialized successfully."
+                )
+
+                st.rerun()
