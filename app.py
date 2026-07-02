@@ -11,7 +11,6 @@ from utils.reconciler import (
 
 from utils.initializer import (
     get_next_month,
-    check_month_exists,
     prepare_new_month_dataframe
 )
 
