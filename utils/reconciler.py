@@ -4,6 +4,7 @@ import numpy as np
 
 def extract_bank_statement(pdf_file):
     all_rows = []
+    pdf_file.seek(0)
     
     # 1. Extract tables using your logic
     with pdfplumber.open(pdf_file) as pdf:
@@ -110,7 +111,7 @@ def map_bank_to_rooms(raw_bank_df, master_df):
     return grouped_payments, unmapped_df
 
 
-def generate_reconciliation_report(grouped_payments,master_df,ledger_df):
+def generate_reconciliation_report(grouped_payments, master_df, ledger_df):
 
     # -----------------------------
     # Clean Data
@@ -131,35 +132,55 @@ def generate_reconciliation_report(grouped_payments,master_df,ledger_df):
     # -----------------------------
     # Create Base Report
     # -----------------------------
-    report_df = pd.merge(master_df[["Room No", "Name"]],ledger_df[["Room No", "Total Dues"]],on="Room No",how="inner")
+    report_df = pd.merge(
+        master_df[["Room No", "Name"]],
+        ledger_df[["Room No", "Total Dues"]],
+        on="Room No",
+        how="inner"
+    )
 
     # -----------------------------
     # Merge Payments
     # -----------------------------
-    report_df = pd.merge(report_df,grouped_payments,on="Room No",how="left")
+    report_df = pd.merge(report_df, grouped_payments, on="Room No", how="left")
 
-    report_df["Total_Paid"] = (pd.to_numeric(report_df["Total_Paid"],errors="coerce").fillna(0))
+    report_df.rename(columns={"Total_Paid": "Total Paid"}, inplace=True)
 
-    report_df["Total Dues"] = (pd.to_numeric(report_df["Total Dues"],errors="coerce").fillna(0))
+    report_df["Total Paid"] = (
+        pd.to_numeric(report_df["Total Paid"], errors="coerce").fillna(0)
+    )
+
+    report_df["Total Dues"] = (
+        pd.to_numeric(report_df["Total Dues"], errors="coerce").fillna(0)
+    )
 
     # -----------------------------
-    # Difference
+    # Settlement
     # -----------------------------
-    report_df["Difference"] = (report_df["Total Dues"] - report_df["Total_Paid"])
+    report_df["Settlement"] = report_df["Total Paid"] - report_df["Total Dues"]
 
     # -----------------------------
     # Status
     # -----------------------------
     def get_status(row):
 
-        if row["Total_Paid"] >= row["Total Dues"]:
+        if row["Total Paid"] >= row["Total Dues"]:
             return "Paid"
 
-        elif row["Total_Paid"] > 0:
+        elif row["Total Paid"] > 0:
             return "Partially Paid"
 
         return "Unpaid"
 
-    report_df["Status"] = report_df.apply(get_status,axis=1)
+    report_df["Status"] = report_df.apply(get_status, axis=1)
 
-    return report_df
+    return report_df[
+        [
+            "Room No",
+            "Name",
+            "Total Dues",
+            "Total Paid",
+            "Settlement",
+            "Status"
+        ]
+    ]

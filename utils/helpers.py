@@ -30,7 +30,7 @@ def format_amount(value):
 def get_statement_month(pdf_file):
     """
     Extract statement month from the first page
-    and return it in the same format as Yearly_Ledger.
+    and return it in the same format as testData.
 
     Example:
     01/05/2026 To 31/05/2026

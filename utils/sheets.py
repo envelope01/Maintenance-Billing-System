@@ -7,25 +7,25 @@ def append_to_ledger(new_month_df):
 
     conn = st.connection("gsheets",type=GSheetsConnection)
 
-    ledger_df = conn.read(worksheet="Yearly_Ledger",ttl=0)
+    ledger_df = conn.read(worksheet="testData",ttl=0)
 
     updated_df = pd.concat([ledger_df, new_month_df],ignore_index=True)
 
-    conn.update(worksheet="Yearly_Ledger",data=updated_df)
+    conn.update(worksheet="testData",data=updated_df)
 
     return True
 
 
 
-def update_status_to_sheet(report_df,statement_month):
+def update_status_to_sheet(report_df, statement_month):
     """
-    Update only Status column in Google Sheet
+    Update only Status and Settlement columns in Google Sheet
     for the selected billing month.
     """
 
-    conn = st.connection("gsheets",type=GSheetsConnection)
+    conn = st.connection("gsheets", type=GSheetsConnection)
 
-    ledger_df = conn.read(worksheet="Yearly_Ledger",ttl=0)
+    ledger_df = conn.read(worksheet="testData", ttl=0)
 
     ledger_df.columns = (ledger_df.columns.str.strip())
 
@@ -36,25 +36,57 @@ def update_status_to_sheet(report_df,statement_month):
 
     report_df["Room No"] = (report_df["Room No"].astype(str).str.strip())
 
+    required_columns = {"Room No", "Status", "Settlement"}
+    missing_report_columns = required_columns - set(report_df.columns)
+
+    if missing_report_columns:
+        raise ValueError(
+            "Reconciliation report is missing: "
+            + ", ".join(sorted(missing_report_columns))
+        )
+
+    if "Settlement" not in ledger_df.columns:
+        raise ValueError("testData is missing the Settlement column.")
+
     status_mapping = {
         "Paid": "Paid Online",
         "Partially Paid": "Partially Paid",
         "Unpaid": "Unpaid"
     }
 
-    report_df["Status"] = (report_df["Status"].map(status_mapping))
+    report_df["Sheet Status"] = report_df["Status"].map(status_mapping)
+    report_df["Settlement"] = (
+        pd.to_numeric(report_df["Settlement"], errors="coerce").fillna(0)
+    )
 
     status_lookup = dict(
         zip(
             report_df["Room No"],
-            report_df["Status"]
+            report_df["Sheet Status"]
         )
     )
 
-    mask = (ledger_df["Month & Year"]== statement_month)
+    settlement_lookup = dict(
+        zip(
+            report_df["Room No"],
+            report_df["Settlement"]
+        )
+    )
 
-    ledger_df.loc[mask,"Status"] = (ledger_df.loc[mask,"Room No"].map(status_lookup).fillna(ledger_df.loc[mask,"Status"]))
+    mask = (ledger_df["Month & Year"] == statement_month)
 
-    conn.update(worksheet="Yearly_Ledger",data=ledger_df)
+    ledger_df.loc[mask, "Status"] = (
+        ledger_df.loc[mask, "Room No"]
+        .map(status_lookup)
+        .fillna(ledger_df.loc[mask, "Status"])
+    )
+
+    ledger_df.loc[mask, "Settlement"] = (
+        ledger_df.loc[mask, "Room No"]
+        .map(settlement_lookup)
+        .fillna(ledger_df.loc[mask, "Settlement"])
+    )
+
+    conn.update(worksheet="testData", data=ledger_df)
 
     return True

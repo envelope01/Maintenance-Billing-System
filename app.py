@@ -71,7 +71,7 @@ try:
     conn = st.connection("gsheets", type=GSheetsConnection)
 
     master_df = conn.read(worksheet="Master_Flats", ttl=0)
-    ledger_df = conn.read(worksheet="Yearly_Ledger", ttl=0)
+    ledger_df = conn.read(worksheet="testData", ttl=0)
 
 except Exception as e:
     st.error(f"Google Sheets Connection Failed\n\n{e}")
@@ -187,6 +187,7 @@ with tab2:
             st.session_state.grouped_payments = grouped_payments
             st.session_state.unmapped_df = unmapped_df
             st.session_state.reconciliation_done = True
+            st.session_state.status_updated = False
 
         st.toast("Reconciliation completed successfully.")
 
@@ -210,14 +211,10 @@ with tab2:
         matched_credit = grouped_payments["Total_Paid"].sum()
         unmatched_credit = unmapped_df["Credit"].sum()
 
-        difference = total_credit - (
-            matched_credit + unmatched_credit
-        )
-
         col1, col2, col3 = st.columns(3)
 
         col1.metric("Paid", paid)
-        col2.metric("Partial", partial)
+        col2.metric("Partially Paid", partial)
         col3.metric("Unpaid", unpaid)
 
         st.divider()
@@ -256,25 +253,17 @@ with tab2:
 
         st.divider()
 
-        if not unmapped_df.empty:
+        st.subheader("Unmatched Transactions")
 
-            st.subheader("Unmatched Transactions")
+        st.dataframe(
+            unmapped_df,
+            use_container_width=True
+        )
 
-            st.dataframe(
-                unmapped_df,
-                use_container_width=True
-            )
-
-            st.divider()
-
-        if difference != 0:
-
-            st.warning(
-                f"₹{difference:,.0f} could not be reconciled."
-            )
+        st.divider()
 
         if st.button(
-            "📤 Update Status",
+            "Update Status to Google Sheets",
             type="primary"
         ):
 
@@ -286,22 +275,22 @@ with tab2:
             st.session_state.status_updated = True
 
             st.toast(
-                "Online payment statuses updated successfully."
+                "Status and settlement updated successfully."
             )
 
         if st.session_state.status_updated:
 
             st.success(
-                "Online payment statuses have been updated."
+                "Status and settlement have been updated."
             )
 
             st.link_button(
-                "📊 Open Google Sheets",
+                "Open Google Sheets",
                 st.secrets["connections"]["gsheets"]["spreadsheet"]
             )
 
             st.caption(
-                "Verify cash payments in Google Sheets, then return to the Initialize Billing Month tab."
+                "Verify cash payments in Google Sheets, then continue with Initialize Billing Month."
             )
 
 
