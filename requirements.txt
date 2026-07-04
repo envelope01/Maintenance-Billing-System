@@ -1,9 +1,10 @@
 streamlit
-streamlit-gsheets
-docxtpl
-pypdf
-pymupdf
-pywin32
+st-gsheets-connection
 pandas
 numpy
+openpyxl
+docxtpl
+PyPDF2
+python-docx
 pdfplumber
+pymupdf
