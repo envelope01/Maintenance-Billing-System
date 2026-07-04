@@ -302,6 +302,10 @@ with tab3:
     st.header("Initialize Billing Month")
     st.caption("Create the next billing cycle after all payment statuses are verified.")
 
+    st.session_state.setdefault("initialization_success", False)
+    st.session_state.setdefault("initialized_month", None)
+    st.session_state.setdefault("initialization_current_month", None)
+
     available_months = ledger_df["Month & Year"].dropna().unique().tolist()
 
     selected_month = st.selectbox(
@@ -312,21 +316,28 @@ with tab3:
 
     if st.button("Validate", type="primary"):
 
-        current_month_df = ledger_df[
-            ledger_df["Month & Year"] == selected_month
+        latest_ledger_df = conn.read(worksheet="Yearly_Ledger", ttl=0)
+        latest_ledger_df.columns = latest_ledger_df.columns.str.strip()
+
+        current_month_df = latest_ledger_df[
+            latest_ledger_df["Month & Year"] == selected_month
         ].copy()
 
         next_month = get_next_month(selected_month)
 
         validation = validate_initialization(
             current_month_df,
-            ledger_df,
+            latest_ledger_df,
             next_month
         )
 
         st.session_state.validation = validation
         st.session_state.current_month_df = current_month_df
         st.session_state.next_month = next_month
+        st.session_state.new_month_df = None
+        st.session_state.initialization_success = False
+        st.session_state.initialized_month = None
+        st.session_state.initialization_current_month = selected_month
 
     if st.session_state.validation is not None:
 
@@ -334,35 +345,37 @@ with tab3:
 
         st.divider()
 
-        st.subheader("Validation Summary")
+        if not validation["current_month_exists"]:
+            st.error("Current month does not exist in Yearly_Ledger.")
 
-        col1, col2 = st.columns(2)
+        if validation["blank_status"] > 0:
+            st.error(
+                f"{validation['blank_status']} flats have blank status."
+            )
 
-        with col1:
-
-            if validation["blank_status"] == 0:
-                st.success("All payment statuses are updated.")
-            else:
-                st.error(
-                    f"{validation['blank_status']} flats have blank status."
-                )
-
-        with col2:
-
-            if validation["month_exists"]:
-                st.error("Next month already exists.")
-            else:
-
-                month_name = pd.to_datetime(
-                    st.session_state.next_month,
-                    dayfirst=True
-                ).strftime("%B %Y")
-
-                st.success(
-                    f"{month_name} is ready to initialize."
-                )
+        if validation["month_exists"]:
+            st.error("Next month already exists.")
 
         if validation["valid"]:
+
+            current_month_label = pd.to_datetime(
+                st.session_state.initialization_current_month,
+                dayfirst=True
+            ).strftime("%B %Y")
+
+            next_month_label = pd.to_datetime(
+                st.session_state.next_month,
+                dayfirst=True
+            ).strftime("%B %Y")
+
+            st.subheader("Initialization Summary")
+
+            col1, col2, col3, col4 = st.columns(4)
+
+            col1.metric("Current Month", current_month_label)
+            col2.metric("Next Month", next_month_label)
+            col3.metric("Total Flats", len(st.session_state.current_month_df))
+            col4.metric("Status", "Ready to Initialize")
 
             new_month_df = prepare_new_month_dataframe(
                 st.session_state.current_month_df,
@@ -382,7 +395,7 @@ with tab3:
             )
 
             st.caption(
-                "Please verify all cash payments in Google Sheets before initializing the next billing month."
+                "Please review the preview before initializing the next billing month."
             )
 
             if st.button(
@@ -393,10 +406,29 @@ with tab3:
                 append_to_ledger(
                     st.session_state.new_month_df
                 )
+
+                st.session_state.initialization_success = True
+                st.session_state.initialized_month = pd.to_datetime(
+                    st.session_state.next_month,
+                    dayfirst=True
+                ).strftime("%B %Y")
                 st.session_state.validation = None
 
                 st.toast(
                     f"{pd.to_datetime(st.session_state.next_month, dayfirst=True).strftime('%B %Y')} initialized successfully."
                 )
 
-                st.rerun()
+    if st.session_state.initialization_success:
+
+        st.success(
+            f"{st.session_state.initialized_month} initialized successfully."
+        )
+
+        st.link_button(
+            "📊 Open Google Sheets",
+            st.secrets["connections"]["gsheets"]["spreadsheet"]
+        )
+
+        st.caption(
+            "Review the initialized month in Google Sheets before generating bills."
+        )

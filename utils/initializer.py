@@ -9,7 +9,7 @@ def get_next_month(statement_month):
     return next_month.strftime("%d-%m-%Y")
 
 
-def validate_initialization(current_month_df,ledger_df,next_month):
+def validate_initialization(current_month_df, ledger_df, next_month):
     """
     Validate whether next month
     can be initialized.
@@ -22,22 +22,32 @@ def validate_initialization(current_month_df,ledger_df,next_month):
 
     ledger_df.columns = (ledger_df.columns.str.strip())
 
-    # -----------------------------
-    # Check Blank Status
-    # -----------------------------
-    blank_status = (current_month_df["Status"].fillna("").astype(str).str.strip().eq("").sum())
+    current_month_exists = bool(not current_month_df.empty)
+
+    if current_month_exists:
+        blank_status = (
+            current_month_df["Status"]
+            .fillna("")
+            .astype(str)
+            .str.strip()
+            .eq("")
+            .sum()
+        )
+    else:
+        blank_status = 0
 
     # -----------------------------
     # Check Next Month Exists
     # -----------------------------
-    month_exists = (ledger_df["Month & Year"].eq(next_month).any())
+    month_exists = bool(ledger_df["Month & Year"].eq(next_month).any())
 
     # -----------------------------
     # Validation Result
     # -----------------------------
     return {
 
-        "valid": (blank_status == 0 and not month_exists),
+        "valid": (current_month_exists and blank_status == 0 and not month_exists),
+        "current_month_exists": current_month_exists,
         "blank_status": int(blank_status),
         "month_exists": month_exists
 
@@ -45,8 +55,8 @@ def validate_initialization(current_month_df,ledger_df,next_month):
 
 def prepare_new_month_dataframe(current_month_df, next_month):
     """
-    Prepare next month's ledger using
-    reconciliation report and master data.
+    Prepare next month's ledger using only Settlement
+    to populate carry-forward values.
     """
     current_month_df = current_month_df.copy()
 
@@ -86,47 +96,26 @@ def prepare_new_month_dataframe(current_month_df, next_month):
     df["Extra Charges"] = ""
     df["Late Chrg / Penalty"] = 0
     df["Status"] = ""
+    df["Settlement"] = 0
 
     # -----------------------------
-    # Regular Dues
+    # Carry Forward
     # -----------------------------
-    df["Regular Dues"] = (
-        df["Service M Chrg."]
-        + df["Sinking Fund"]
-        + df["Repair & Maintenance"]
-        + df["Edu."]
-        + df["Other"]
-        + df["NOC Charges"]
-        + df["Parking Charges"]
-    )
+    settlement = pd.to_numeric(current_month_df["Settlement"], errors="coerce").fillna(0)
+    df["Previous dues"] = settlement.where(settlement < 0, 0).abs()
+    df["Recd Advance"] = settlement.where(settlement > 0, 0)
 
-    # -----------------------------
-    # Keep Final Columns
-    # -----------------------------
-    df = df[
-        [
-            "Month & Year",
-            "Room No",
-            "Bill No",
-            "Service M Chrg.",
-            "Sinking Fund",
-            "Repair & Maintenance",
-            "Edu.",
-            "NOC Charges",
-            "Parking Charges",
-            "Other",
-            "Extra Charges",
-            "Regular Dues",
-            "Previous dues",
-            "Late Chrg / Penalty",
-            "Adjustment",
-            "Total Dues",
-            "Balance Advance",
-            "Current Bill Amt",
-            "Status",
-            "Recd Advance"
-        ]
+    formula_columns = [
+        "Regular Dues",
+        "Current Bill Amt",
+        "Adjustment",
+        "Balance Advance",
+        "Total Dues"
     ]
+
+    for column in formula_columns:
+        if column in df.columns:
+            df[column] = ""
 
     return df
 
