@@ -1,8 +1,8 @@
-docxtpl==0.20.2
-numpy==2.5.1
-pandas==3.0.3
-pdfplumber==0.11.8
-PyMuPDF==1.20.2
-pypdf==6.14.2
-st_gsheets_connection==0.1.0
-streamlit==1.50.0
+docxtpl
+numpy
+pandas
+pdfplumber
+PyMuPDF
+pypdf
+st_gsheets_connection
+streamlit
