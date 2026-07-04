@@ -6,7 +6,10 @@ import pandas as pd
 import pdfplumber
 
 def get_billing_dates(selected_month):
-    ts = pd.Timestamp(selected_month)
+    ts = pd.to_datetime(
+        selected_month,
+        format="%d-%m-%Y"
+    )
     last_day = calendar.monthrange(ts.year, ts.month)[1]
 
     return {

@@ -78,6 +78,11 @@ except Exception as e:
     st.stop()
 
 # --------------------------
+# Quick Actions
+# --------------------------
+st.link_button( "📊 Open Google Sheets",st.secrets["connections"]["gsheets"]["spreadsheet"])
+
+# --------------------------
 # Tabs
 # --------------------------
 tab1, tab2, tab3 = st.tabs(
@@ -105,10 +110,13 @@ with tab1:
         selected_month = st.selectbox(
             "Billing Month",
             available_months,
-            format_func=lambda x: pd.to_datetime(x, dayfirst=True).strftime("%B %Y")
+            format_func=lambda x: pd.to_datetime(
+                x,
+                format="%d-%m-%Y"
+            ).strftime("%B %Y")
         )
 
-    month_label = pd.to_datetime(selected_month, dayfirst=True).strftime("%B %Y")
+    month_label = pd.to_datetime(selected_month,format="%d-%m-%Y").strftime("%B %Y")
     default_name = f"{month_label} Dues"
 
     with col2:
@@ -117,14 +125,23 @@ with tab1:
             value=default_name
         )
 
+    output_format = st.radio(
+        "Output Format",
+        ["WhatsApp PDF", "Printable PDF"],
+        index=0,
+        horizontal=True
+    )
+
     if st.button("Generate Bills", type="primary"):
 
         with st.spinner("Generating PDF bills..."):
             pdf_file = generate_monthly_bills(
                 master_df,
                 ledger_df,
-                selected_month
+                selected_month,
+                output_format=output_format
             )
+    
 
         if pdf_file is None:
             st.error("No bills found for the selected month.")
@@ -316,7 +333,7 @@ with tab3:
 
     if st.button("Validate", type="primary"):
 
-        latest_ledger_df = conn.read(worksheet="Yearly_Ledger", ttl=0)
+        latest_ledger_df = conn.read(worksheet="testData", ttl=0)
         latest_ledger_df.columns = latest_ledger_df.columns.str.strip()
 
         current_month_df = latest_ledger_df[
@@ -346,7 +363,7 @@ with tab3:
         st.divider()
 
         if not validation["current_month_exists"]:
-            st.error("Current month does not exist in Yearly_Ledger.")
+            st.error("Current month does not exist in testData.")
 
         if validation["blank_status"] > 0:
             st.error(

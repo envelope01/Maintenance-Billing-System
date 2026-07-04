@@ -2,18 +2,128 @@ import os
 import io
 import shutil
 
-import pandas as pd
 import numpy as np
+import pandas as pd
 
 from docxtpl import DocxTemplate
-from PyPDF2 import PdfMerger
+
+from pypdf import (
+    PdfMerger,
+)
 
 from utils.config import MAPPING
 from utils.helpers import get_billing_dates, format_amount
 from utils.converter import convert_docx_to_pdf, detect_pdf_engine
 
+import fitz
 
-def generate_monthly_bills(master_df, ledger_df, selected_month):
+
+def merge_bill_pdfs(pdf_paths):
+    merger = PdfMerger()
+
+    try:
+        for pdf_path in pdf_paths:
+            merger.append(pdf_path)
+
+        output_pdf = io.BytesIO()
+        merger.write(output_pdf)
+        output_pdf.seek(0)
+
+        return output_pdf
+
+    finally:
+        merger.close()
+
+
+
+def create_printable_pdf(pdf_paths):
+
+    output_doc = fitz.open()
+
+    a4 = fitz.paper_rect("a4")
+
+    # Landscape page
+    page_width = a4.height
+    page_height = a4.width
+
+    margin = 15
+    gap = 10
+
+    slot_width = (page_width - (2 * margin) - gap) / 2
+    slot_height = page_height - (2 * margin)
+
+    left_rect = fitz.Rect(
+        margin,
+        margin,
+        margin + slot_width,
+        margin + slot_height
+    )
+
+    right_rect = fitz.Rect(
+        margin + slot_width + gap,
+        margin,
+        page_width - margin,
+        margin + slot_height
+    )
+
+    center_x = page_width / 2
+
+    for i in range(0, len(pdf_paths), 2):
+
+        page = output_doc.new_page(
+            width=page_width,
+            height=page_height
+        )
+
+        # Left Bill (Portrait)
+        src = fitz.open(pdf_paths[i])
+
+        page.show_pdf_page(
+            left_rect,
+            src,
+            pno=0,
+            keep_proportion=True
+        )
+
+        src.close()
+
+        # Right Bill (Portrait)
+        if i + 1 < len(pdf_paths):
+
+            src = fitz.open(pdf_paths[i + 1])
+
+            page.show_pdf_page(
+                right_rect,
+                src,
+                pno=0,
+                keep_proportion=True
+            )
+
+            src.close()
+
+        # Cut line
+        page.draw_line(
+            fitz.Point(center_x, margin),
+            fitz.Point(center_x, page_height - margin),
+            width=0.7,
+            color=(0.5, 0.5, 0.5),
+            dashes="[6 6]"
+        )
+
+    pdf_bytes = output_doc.tobytes(
+        garbage=4,
+        deflate=True
+    )
+
+    output_doc.close()
+
+    output_pdf = io.BytesIO(pdf_bytes)
+    output_pdf.seek(0)
+
+    return output_pdf
+
+
+def generate_monthly_bills(master_df, ledger_df, selected_month, output_format="WhatsApp PDF"):
 
     # ---------------------------------
     # Clean columns
@@ -42,24 +152,29 @@ def generate_monthly_bills(master_df, ledger_df, selected_month):
     # ---------------------------------
     merged_df = pd.merge(
         month_data,
-        master_df,
+        master_df[
+            [
+                "Room No",
+                "Name",
+                "Bank_Mapping_ID"
+            ]
+        ],
         on="Room No",
         how="left"
     )
-
+    print(merged_df.columns.tolist())
     merged_df.replace(
         ["NaN", "", None],
         np.nan,
         inplace=True
     )
-
+    print(merged_df.columns.tolist())
     template_path = "assets/Template.docx"
-
-    merger = PdfMerger()
 
     engine = detect_pdf_engine()
 
     word_app = None
+    generated_pdf_paths = []
 
     try:
 
@@ -73,9 +188,7 @@ def generate_monthly_bills(master_df, ledger_df, selected_month):
 
             pythoncom.CoInitialize()
 
-            word_app = win32com.client.Dispatch(
-                "Word.Application"
-                )
+            word_app = win32com.client.gencache.EnsureDispatch("Word.Application")
 
             word_app.Visible = False
 
@@ -83,10 +196,13 @@ def generate_monthly_bills(master_df, ledger_df, selected_month):
         # Temporary folder
         # ---------------------------------
         temp_dir = os.path.abspath("temp_bills")
-        os.makedirs(temp_dir, exist_ok=True)
+
+        if os.path.exists(temp_dir):
+            shutil.rmtree(temp_dir)
+
+        os.makedirs(temp_dir)
 
         for _, row in merged_df.iterrows():
-
             room_no = str(
                 row.get("Room No", "Unknown")
                 ).strip()
@@ -96,6 +212,7 @@ def generate_monthly_bills(master_df, ledger_df, selected_month):
                 doc = DocxTemplate(template_path)
 
                 context = get_billing_dates(selected_month)
+
 
                 for df_col, placeholder in MAPPING.items():
 
@@ -138,7 +255,7 @@ def generate_monthly_bills(master_df, ledger_df, selected_month):
                         f"PDF was not generated:\n{pdf_path}"
                     )
 
-                merger.append(pdf_path)
+                generated_pdf_paths.append(pdf_path)
 
             except Exception as e:
 
@@ -146,11 +263,10 @@ def generate_monthly_bills(master_df, ledger_df, selected_month):
                     f"Error generating bill for Room {room_no}\n\n{e}"
                 )
 
-        output_pdf = io.BytesIO()
-
-        merger.write(output_pdf)
-        output_pdf.seek(0)
-        merger.close()
+        if output_format == "Printable PDF":
+            output_pdf = create_printable_pdf(generated_pdf_paths)
+        else:
+            output_pdf = merge_bill_pdfs(generated_pdf_paths)
 
         try:
             shutil.rmtree(temp_dir)

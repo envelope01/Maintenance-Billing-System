@@ -1,9 +1,9 @@
 streamlit
-st-gsheets-connection
+streamlit-gsheets
+docxtpl
+pypdf
+pymupdf
+pywin32
 pandas
 numpy
-openpyxl
-docxtpl
-PyPDF2
-python-docx
 pdfplumber

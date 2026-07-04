@@ -19,7 +19,7 @@ def detect_pdf_engine():
 
             pythoncom.CoInitialize()
 
-            word = win32com.client.Dispatch("Word.Application")
+            word = win32com.client.gencache.EnsureDispatch("Word.Application")
             word.Quit()
 
             return "word"
@@ -67,7 +67,7 @@ def convert_with_word(docx_file, pdf_file, word_app=None):
 
         pythoncom.CoInitialize()
 
-        word_app = win32com.client.Dispatch("Word.Application")
+        word_app = win32com.client.gencache.EnsureDispatch("Word.Application")
         word_app.Visible = False
 
         we_opened_word = True
