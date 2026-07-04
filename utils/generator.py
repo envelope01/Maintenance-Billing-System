@@ -7,9 +7,7 @@ import pandas as pd
 
 from docxtpl import DocxTemplate
 
-from pypdf import (
-    PdfMerger,
-)
+from pypdf import PdfMerger
 
 from utils.config import MAPPING
 from utils.helpers import get_billing_dates, format_amount
