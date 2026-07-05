@@ -160,13 +160,13 @@ def generate_monthly_bills(master_df, ledger_df, selected_month, output_format="
         on="Room No",
         how="left"
     )
-    print(merged_df.columns.tolist())
+
     merged_df.replace(
         ["NaN", "", None],
         np.nan,
         inplace=True
     )
-    print(merged_df.columns.tolist())
+
     template_path = "assets/Template.docx"
 
     engine = detect_pdf_engine()

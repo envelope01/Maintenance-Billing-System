@@ -1,92 +1,121 @@
+from google.oauth2.service_account import Credentials
+import gspread
 import streamlit as st
-from streamlit_gsheets import GSheetsConnection
-import pandas as pd
+import pandas as pd 
+
+
+def get_gspread_client():
+    creds_dict = dict(st.secrets["connections"]["gsheets"])
+
+    if "private_key" in creds_dict:
+        creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
+
+    scopes = ["https://www.googleapis.com/auth/spreadsheets"]
+    creds = Credentials.from_service_account_info(creds_dict, scopes=scopes)
+
+    return gspread.authorize(creds)
 
 
 def append_to_ledger(new_month_df):
 
-    conn = st.connection("gsheets",type=GSheetsConnection)
+    gc = get_gspread_client()
 
-    ledger_df = conn.read(worksheet="testData",ttl=0)
+    spreadsheet = gc.open_by_url(st.secrets["connections"]["gsheets"]["spreadsheet"])
+    worksheet = spreadsheet.worksheet("testData")
 
-    updated_df = pd.concat([ledger_df, new_month_df],ignore_index=True)
+    sheet_df = new_month_df.copy()
 
-    conn.update(worksheet="testData",data=updated_df)
+    formula_columns = [
+        "Regular Dues",
+        "Current Bill Amt",
+        "Balance Advance",
+        "Total Dues"
+    ]
+
+    for column in formula_columns:
+        if column in sheet_df.columns:
+            sheet_df[column] = ""
+
+    values = (sheet_df.fillna("").astype(object).values.tolist())
+    worksheet.append_rows(values,value_input_option="USER_ENTERED")
 
     return True
 
 
-
 def update_status_to_sheet(report_df, statement_month):
-    """
-    Update only Status and Settlement columns in Google Sheet
-    for the selected billing month.
-    """
 
-    conn = st.connection("gsheets", type=GSheetsConnection)
+    gc = get_gspread_client()
 
-    ledger_df = conn.read(worksheet="testData", ttl=0)
+    spreadsheet = gc.open_by_url(st.secrets["connections"]["gsheets"]["spreadsheet"])
 
-    ledger_df.columns = (ledger_df.columns.str.strip())
+    worksheet = spreadsheet.worksheet("testData")
+
+    data = worksheet.get_all_values()
+
+    headers = [h.strip() for h in data[0]]
+
+    room_col = headers.index("Room No") + 1
+    month_col = headers.index("Month & Year") + 1
+    status_col = headers.index("Status") + 1
+    settlement_col = headers.index("Settlement") + 1
 
     report_df = report_df.copy()
-    report_df.columns = (report_df.columns.str.strip())
-
-    ledger_df["Room No"] = (ledger_df["Room No"].astype(str).str.strip())
 
     report_df["Room No"] = (report_df["Room No"].astype(str).str.strip())
 
-    required_columns = {"Room No", "Status", "Settlement"}
-    missing_report_columns = required_columns - set(report_df.columns)
-
-    if missing_report_columns:
-        raise ValueError(
-            "Reconciliation report is missing: "
-            + ", ".join(sorted(missing_report_columns))
-        )
-
-    if "Settlement" not in ledger_df.columns:
-        raise ValueError("testData is missing the Settlement column.")
+    statement_month = str(statement_month).strip()
 
     status_mapping = {
         "Paid": "Paid Online",
         "Partially Paid": "Partially Paid",
-        "Unpaid": "Unpaid"
+        "Unpaid": "Unpaid",
     }
 
-    report_df["Sheet Status"] = report_df["Status"].map(status_mapping)
-    report_df["Settlement"] = (
-        pd.to_numeric(report_df["Settlement"], errors="coerce").fillna(0)
-    )
+    report_df["Sheet Status"] = (report_df["Status"].map(status_mapping))
 
-    status_lookup = dict(
-        zip(
-            report_df["Room No"],
-            report_df["Sheet Status"]
-        )
-    )
+    report_df["Settlement"] = (pd.to_numeric(report_df["Settlement"],errors="coerce").fillna(0).astype(float))
 
-    settlement_lookup = dict(
-        zip(
-            report_df["Room No"],
-            report_df["Settlement"]
-        )
-    )
+    lookup = report_df.set_index("Room No")
 
-    mask = (ledger_df["Month & Year"] == statement_month)
+    updates = []
 
-    ledger_df.loc[mask, "Status"] = (
-        ledger_df.loc[mask, "Room No"]
-        .map(status_lookup)
-        .fillna(ledger_df.loc[mask, "Status"])
-    )
+    for row_number, row in enumerate(data[1:], start=2):
 
-    ledger_df.loc[mask, "Settlement"] = (
-        ledger_df.loc[mask, "Room No"]
-        .map(settlement_lookup)
-        .fillna(ledger_df.loc[mask, "Settlement"])
-    )
+        room = row[room_col - 1].strip()
+        month = row[month_col - 1].strip()
 
-    conn.update(worksheet="testData", data=ledger_df)
+        if month == statement_month and room in lookup.index:
 
+            status_val = lookup.loc[room, "Sheet Status"]
+            settlement_val = lookup.loc[room, "Settlement"]
+
+            if isinstance(status_val, pd.Series):
+                status_val = status_val.iloc[0]
+
+            if isinstance(settlement_val, pd.Series):
+                settlement_val = settlement_val.iloc[0]
+
+            updates.append(
+                {
+                    "range": gspread.utils.rowcol_to_a1(
+                        row_number,
+                        status_col
+                    ),
+                    "values": [[status_val]]
+                }
+            )
+
+            updates.append(
+                {
+                    "range": gspread.utils.rowcol_to_a1(
+                        row_number,
+                        settlement_col
+                    ),
+                    "values": [[float(settlement_val)]]
+                }
+            )
+
+    if updates:
+        worksheet.batch_update(updates,value_input_option="USER_ENTERED")
+        
     return True

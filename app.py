@@ -4,7 +4,7 @@ from streamlit_gsheets import GSheetsConnection
 
 from utils.generator import generate_monthly_bills
 from utils.helpers import get_statement_month
-from utils.initializer import get_next_month, prepare_new_month_dataframe,validate_initialization
+from utils.initializer import get_next_month, prepare_new_month_dataframe, validate_initialization
 from utils.reconciler import (
     extract_bank_statement,
     generate_reconciliation_report,
@@ -18,17 +18,17 @@ from utils.sheets import (
 # --------------------------------------------------
 # Page Configuration
 # --------------------------------------------------
-
+# CHANGED: layout="wide" to give columns space to breathe
 st.set_page_config(
     page_title="Maintenance Billing System",
     page_icon="🏢",
-    layout="wide"
+    layout="wide", 
+    initial_sidebar_state="expanded"
 )
 
 # --------------------------------------------------
 # Load Styles
 # --------------------------------------------------
-
 try:
     with open("assets/style.css") as css:
         st.markdown(f"<style>{css.read()}</style>", unsafe_allow_html=True)
@@ -36,16 +36,8 @@ except FileNotFoundError:
     pass
 
 # --------------------------------------------------
-# Application Header
-# --------------------------------------------------
-
-st.title("🏢 Maintenance Billing System")
-st.caption("Society Maintenance Billing & Payment Management")
-
-# --------------------------------------------------
 # Session State
 # --------------------------------------------------
-
 DEFAULT_STATE = {
     "report_df": None,
     "raw_bank_df": None,
@@ -66,37 +58,38 @@ for key, value in DEFAULT_STATE.items():
 # --------------------------------------------------
 # Google Sheets Connection
 # --------------------------------------------------
-
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
-
     master_df = conn.read(worksheet="Master_Flats", ttl=0)
     ledger_df = conn.read(worksheet="testData", ttl=0)
-
 except Exception as e:
     st.error(f"Google Sheets Connection Failed\n\n{e}")
     st.stop()
 
-# --------------------------
-# Quick Actions
-# --------------------------
-st.link_button( "📊 Open Google Sheets",st.secrets["connections"]["gsheets"]["spreadsheet"])
+# --------------------------------------------------
+# Sidebar Navigation (Replaces Tabs)
+# --------------------------------------------------
+st.sidebar.title("🏢 Menu")
+st.sidebar.caption("Society Maintenance Management")
+st.sidebar.divider()
 
-# --------------------------
-# Tabs
-# --------------------------
-tab1, tab2, tab3 = st.tabs(
-    ["📄 Generate Bills", "💳 Payment Tracker", "🗓️ Initialize Month"]
+page = st.sidebar.radio(
+    "Navigation",
+    ["📄 Generate Bills", "💳 Payment Tracker", "🗓️ Initialize Month"],
+    label_visibility="collapsed"
 )
 
-# ============================================================
-# TAB 1
-# ============================================================
+st.sidebar.divider()
+st.sidebar.link_button("📊 Open Google Sheets", st.secrets["connections"]["gsheets"]["spreadsheet"])
 
-with tab1:
 
+# ============================================================
+# PAGE 1: Generate Bills
+# ============================================================
+if page == "📄 Generate Bills":
     st.header("Generate Monthly Bills")
     st.caption("Generate maintenance bills for a selected billing month.")
+    st.divider()
 
     available_months = ledger_df["Month & Year"].dropna().unique().tolist()
 
@@ -104,99 +97,71 @@ with tab1:
         st.warning("No billing months available.")
         st.stop()
 
-    col1, col2 = st.columns([1, 2])
+    with st.container():
+        col1, col2 = st.columns(2)
+        with col1:
+            selected_month = st.selectbox(
+                "Billing Month",
+                available_months,
+                format_func=lambda x: pd.to_datetime(x, format="%d-%m-%Y").strftime("%B %Y")
+            )
+        
+        month_label = pd.to_datetime(selected_month, format="%d-%m-%Y").strftime("%B %Y")
+        default_name = f"{month_label} Dues"
 
-    with col1:
-        selected_month = st.selectbox(
-            "Billing Month",
-            available_months,
-            format_func=lambda x: pd.to_datetime(
-                x,
-                format="%d-%m-%Y"
-            ).strftime("%B %Y")
-        )
-
-    month_label = pd.to_datetime(selected_month,format="%d-%m-%Y").strftime("%B %Y")
-    default_name = f"{month_label} Dues"
-
-    with col2:
-        output_filename = st.text_input(
-            "Output File Name",
-            value=default_name
-        )
+        with col2:
+            output_filename = st.text_input("Output File Name", value=default_name)
 
     output_format = st.radio(
         "Output Format",
-        ["WhatsApp PDF", "Printable PDF"],
+        ["Standard PDF", "Printable PDF"],
         index=0,
         horizontal=True
     )
 
+    st.write("") 
     if st.button("Generate Bills", type="primary"):
-
         with st.spinner("Generating PDF bills..."):
             pdf_file = generate_monthly_bills(
-                master_df,
-                ledger_df,
-                selected_month,
-                output_format=output_format
+                master_df, ledger_df, selected_month, output_format=output_format
             )
     
-
         if pdf_file is None:
             st.error("No bills found for the selected month.")
         else:
-            st.toast("Bills generated successfully.")
-
+            st.success("Bills generated successfully. You can download them below.")
             st.download_button(
                 "⬇ Download PDF",
                 data=pdf_file,
                 file_name=f"{output_filename}.pdf",
-                mime="application/pdf"
+                mime="application/pdf",
+                type="primary"
             )
 
-
 # ============================================================
-# TAB 2
+# PAGE 2: Payment Tracker
 # ============================================================
-
-with tab2:
-
+elif page == "💳 Payment Tracker":
     st.header("Payment Tracker")
     st.caption("Upload a bank statement to reconcile online maintenance payments.")
+    st.divider()
 
-    uploaded_statement = st.file_uploader(
-        "Bank Statement (PDF)",
-        type=["pdf"]
-    )
+    uploaded_statement = st.file_uploader("Bank Statement (PDF)", type=["pdf"])
 
     if uploaded_statement and st.button("Generate Reconciliation", type="primary"):
-
         with st.spinner("Analyzing bank statement..."):
-
             statement_month = get_statement_month(uploaded_statement)
             month_name = pd.to_datetime(statement_month, dayfirst=True).strftime("%B %Y")
-
             raw_bank_df = extract_bank_statement(uploaded_statement)
-
-            grouped_payments, unmapped_df = map_bank_to_rooms(
-                raw_bank_df,
-                master_df
-            )
-
-            month_ledger = ledger_df[
-                ledger_df["Month & Year"] == statement_month
-            ].copy()
+            grouped_payments, unmapped_df = map_bank_to_rooms(raw_bank_df, master_df)
+            
+            month_ledger = ledger_df[ledger_df["Month & Year"] == statement_month].copy()
 
             if month_ledger.empty:
                 st.error(f"No ledger found for {month_name}.")
                 st.stop()
 
-            report_df = generate_reconciliation_report(
-                grouped_payments,
-                master_df,
-                month_ledger
-            )
+            report_df = generate_reconciliation_report(grouped_payments, master_df, month_ledger)
 
             st.session_state.statement_month = statement_month
             st.session_state.report_df = report_df
@@ -206,10 +171,7 @@ with tab2:
             st.session_state.reconciliation_done = True
             st.session_state.status_updated = False
 
-        st.toast("Reconciliation completed successfully.")
-
     if st.session_state.reconciliation_done:
-
         report_df = st.session_state.report_df
         raw_bank_df = st.session_state.raw_bank_df
         grouped_payments = st.session_state.grouped_payments
@@ -217,8 +179,7 @@ with tab2:
         statement_month = st.session_state.statement_month
 
         month_name = pd.to_datetime(statement_month, dayfirst=True).strftime("%B %Y")
-
-        st.info(f"Statement Month : {month_name}")
+        st.info(f"Statement Month : **{month_name}**", icon="📅")
 
         paid = (report_df["Status"] == "Paid").sum()
         partial = (report_df["Status"] == "Partially Paid").sum()
@@ -228,96 +189,47 @@ with tab2:
         matched_credit = grouped_payments["Total_Paid"].sum()
         unmatched_credit = unmapped_df["Credit"].sum()
 
+        # Status Metrics
         col1, col2, col3 = st.columns(3)
-
-        col1.metric("Paid", paid)
-        col2.metric("Partially Paid", partial)
-        col3.metric("Unpaid", unpaid)
+        col1.metric("🟢 Paid", paid)
+        col2.metric("🟠 Partially Paid", partial)
+        col3.metric("🔴 Unpaid", unpaid)
 
         st.divider()
-    
         st.subheader("Payment Summary")
+        st.caption("Only online payments are reconciled automatically. Verify cash manually.")
 
-        st.caption(
-            "Only online payments are reconciled automatically. Cash payments must be verified manually."
-        )
-
-        col1, col2, col3 = st.columns(3)
-
-        col1.metric(
-            "Total Credits",
-            f"₹{total_credit:,.0f}"
-        )
-
-        col2.metric(
-            "Matched Credits",
-            f"₹{matched_credit:,.0f}"
-        )
-
-        col3.metric(
-            "Unmatched Credits",
-            f"₹{unmatched_credit:,.0f}"
-        )
+        # Financial Metrics
+        col4, col5, col6 = st.columns(3)
+        col4.metric("Total Credits", f"₹{total_credit:,.0f}")
+        col5.metric("Matched Credits", f"₹{matched_credit:,.0f}")
+        col6.metric("Unmatched Credits", f"₹{unmatched_credit:,.0f}")
 
         st.divider()
-
         st.subheader("Reconciliation Report")
-
-        st.dataframe(
-            report_df,
-            use_container_width=True
-        )
+        # CHANGED: use_container_width -> width="stretch"
+        st.dataframe(report_df, width="stretch")
 
         st.divider()
-
         st.subheader("Unmatched Transactions")
-
-        st.dataframe(
-            unmapped_df,
-            use_container_width=True
-        )
+        st.dataframe(unmapped_df, width="stretch")
 
         st.divider()
-
-        if st.button(
-            "Update Status to Google Sheets",
-            type="primary"
-        ):
-
-            update_status_to_sheet(
-                report_df,
-                statement_month
-            )
-
+        if st.button("Update Status to Google Sheets", type="primary"):
+            update_status_to_sheet(report_df, statement_month)
             st.session_state.status_updated = True
 
-            st.toast(
-                "Status and settlement updated successfully."
-            )
-
         if st.session_state.status_updated:
-
-            st.success(
-                "Status and settlement have been updated."
-            )
-
-            st.link_button(
-                "Open Google Sheets",
-                st.secrets["connections"]["gsheets"]["spreadsheet"]
-            )
-
-            st.caption(
-                "Verify cash payments in Google Sheets, then continue with Initialize Billing Month."
-            )
-
+            st.success("Status and settlement have been updated successfully.")
+            st.caption("Verify cash payments in Google Sheets, then continue with Initialize Billing Month.")
 
 # ============================================================
-# TAB 3
+# PAGE 3: Initialize Billing Month
 # ============================================================
-
-with tab3:
+elif page == "🗓️ Initialize Month":
     st.header("Initialize Billing Month")
     st.caption("Create the next billing cycle after all payment statuses are verified.")
+    st.divider()
 
     st.session_state.setdefault("initialization_success", False)
     st.session_state.setdefault("initialized_month", None)
@@ -331,8 +243,8 @@ with tab3:
         format_func=lambda x: pd.to_datetime(x, dayfirst=True).strftime("%B %Y")
     )
 
+    st.write("")
     if st.button("Validate", type="primary"):
-
         latest_ledger_df = conn.read(worksheet="testData", ttl=0)
         latest_ledger_df.columns = latest_ledger_df.columns.str.strip()
 
@@ -341,12 +253,7 @@ with tab3:
         ].copy()
 
         next_month = get_next_month(selected_month)
-
-        validation = validate_initialization(
-            current_month_df,
-            latest_ledger_df,
-            next_month
-        )
+        validation = validate_initialization(current_month_df, latest_ledger_df, next_month)
 
         st.session_state.validation = validation
         st.session_state.current_month_df = current_month_df
@@ -357,95 +264,51 @@ with tab3:
         st.session_state.initialization_current_month = selected_month
 
     if st.session_state.validation is not None:
-
         validation = st.session_state.validation
-
         st.divider()
 
         if not validation["current_month_exists"]:
             st.error("Current month does not exist in testData.")
-
         if validation["blank_status"] > 0:
-            st.error(
-                f"{validation['blank_status']} flats have blank status."
-            )
-
+            st.error(f"{validation['blank_status']} flats have blank status.")
         if validation["month_exists"]:
             st.error("Next month already exists.")
 
         if validation["valid"]:
-
             current_month_label = pd.to_datetime(
-                st.session_state.initialization_current_month,
-                dayfirst=True
+                st.session_state.initialization_current_month, dayfirst=True
             ).strftime("%B %Y")
-
             next_month_label = pd.to_datetime(
-                st.session_state.next_month,
-                dayfirst=True
+                st.session_state.next_month, dayfirst=True
             ).strftime("%B %Y")
 
             st.subheader("Initialization Summary")
-
-            col1, col2, col3, col4 = st.columns(4)
-
-            col1.metric("Current Month", current_month_label)
-            col2.metric("Next Month", next_month_label)
-            col3.metric("Total Flats", len(st.session_state.current_month_df))
-            col4.metric("Status", "Ready to Initialize")
+            # Using 4 columns in wide layout ensures nothing collapses
+            c1, c2, c3, c4 = st.columns(4)
+            c1.metric("Current Month", current_month_label)
+            c2.metric("Next Month", next_month_label)
+            c3.metric("Total Flats", len(st.session_state.current_month_df))
+            c4.metric("Status", "Ready")
 
             new_month_df = prepare_new_month_dataframe(
-                st.session_state.current_month_df,
-                st.session_state.next_month
+                st.session_state.current_month_df, st.session_state.next_month
             )
-
             st.session_state.new_month_df = new_month_df
 
             st.divider()
-
             st.subheader("Next Month Preview")
+            # CHANGED: use_container_width -> width="stretch"
+            st.dataframe(new_month_df, width="stretch", hide_index=True)
+            st.caption("Please review the preview before initializing the next billing month.")
 
-            st.dataframe(
-                new_month_df,
-                use_container_width=True,
-                hide_index=True
-            )
-
-            st.caption(
-                "Please review the preview before initializing the next billing month."
-            )
-
-            if st.button(
-                "🚀 Initialize Month",
-                type="primary"
-            ):
-
-                append_to_ledger(
-                    st.session_state.new_month_df
-                )
-
+            if st.button("🚀 Initialize Month", type="primary"):
+                append_to_ledger(st.session_state.new_month_df)
                 st.session_state.initialization_success = True
                 st.session_state.initialized_month = pd.to_datetime(
-                    st.session_state.next_month,
-                    dayfirst=True
+                    st.session_state.next_month, dayfirst=True
                 ).strftime("%B %Y")
                 st.session_state.validation = None
 
-                st.toast(
-                    f"{pd.to_datetime(st.session_state.next_month, dayfirst=True).strftime('%B %Y')} initialized successfully."
-                )
-
     if st.session_state.initialization_success:
-
-        st.success(
-            f"{st.session_state.initialized_month} initialized successfully."
-        )
-
-        st.link_button(
-            "📊 Open Google Sheets",
-            st.secrets["connections"]["gsheets"]["spreadsheet"]
-        )
-
-        st.caption(
-            "Review the initialized month in Google Sheets before generating bills."
-        )
+        st.success(f"{st.session_state.initialized_month} initialized successfully.")
+        st.caption("Review the initialized month in Google Sheets before generating bills.")

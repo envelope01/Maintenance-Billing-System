@@ -1,31 +1,82 @@
-.main {
-    background:#F5F7FA;
+/* =========================================
+   Global App Styling (Theme Agnostic)
+   ========================================= */
+
+/* Constrains the UI width slightly so it doesn't stretch infinitely on huge monitors,
+   but gives enough width to prevent column collapse. */
+.block-container {
+    padding: 3rem 2rem !important;
+    max-width: 1200px !important;
+    margin: 0 auto;
 }
 
-.block-container{
-    padding-top:1rem;
+/* =========================================
+   Sidebar Styling Polish
+   ========================================= */
+/* Removes default ugly padding from sidebar radio buttons */
+[data-testid="stSidebarNav"] {
+    display: none; /* Hide default Streamlit multi-page nav if it appears */
 }
 
-.stButton button{
-
-    width:100%;
-
-    height:55px;
-
-    font-size:18px;
-
-    font-weight:700;
-
-    border-radius:12px;
-
-    background:#0F62FE;
-
-    color:white;
+.stRadio > div {
+    gap: 0.5rem;
 }
 
-.stDownloadButton button{
+/* =========================================
+   Buttons - Universal Pop & Clickability
+   ========================================= */
 
-    width:100%;
+/* Base styling for all buttons */
+.stButton > button {
+    width: 100%;
+    height: 48px;
+    border-radius: 10px;
+    font-size: 16px;
+    font-weight: 600;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+}
 
-    border-radius:12px;
+/* Hover lift effect (Works beautifully in Dark & Light mode) */
+.stButton > button:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15); 
+}
+
+/* Download & Link Buttons */
+.stDownloadButton > button,
+.stLinkButton > a {
+    width: 100%;
+    border-radius: 10px !important;
+    font-weight: 600 !important;
+    transition: transform 0.2s ease;
+}
+
+.stDownloadButton > button:hover,
+.stLinkButton > a:hover {
+    transform: translateY(-2px);
+}
+
+/* =========================================
+   Metric Cards (Dashboard Aesthetic)
+   ========================================= */
+[data-testid="stMetric"] {
+    background-color: var(--secondary-background-color); 
+    border-radius: 12px;
+    padding: 1rem 1.5rem;
+    transition: transform 0.2s ease, box-shadow 0.2s ease;
+    border: 1px solid rgba(128, 128, 128, 0.1);
+}
+
+[data-testid="stMetric"]:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 12px rgba(0, 0, 0, 0.15);
+}
+
+/* =========================================
+   Inputs & Uploaders (Smooth Corners)
+   ========================================= */
+div[data-baseweb="select"] > div,
+input[type="text"],
+.stTextInput input {
+    border-radius: 8px !important;
 }
