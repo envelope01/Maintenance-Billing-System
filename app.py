@@ -96,7 +96,7 @@ page = st.sidebar.radio(
 )
 
 st.sidebar.divider()
-st.sidebar.link_button("📊 Open Google Sheets", st.secrets["connections"]["gsheets"]["spreadsheet"])
+st.sidebar.link_button("📊 Open Maintenance Sheets", st.secrets["connections"]["gsheets"]["spreadsheet"])
 
 
 # ============================================================
