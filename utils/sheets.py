@@ -28,7 +28,6 @@ def append_to_ledger(new_month_df):
     formula_columns = [
         "Regular Dues",
         "Current Bill Amt",
-        "Balance Advance",
         "Total Dues"
     ]
 

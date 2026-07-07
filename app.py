@@ -308,6 +308,7 @@ elif page == "🗓️ Initialize Month":
             preview_df = preview_df[
                 (preview_df["Previous dues"] > 0)
                 | (preview_df["Balance Advance"] > 0)
+                | (preview_df["Adjustment"] > 0)
             ]
 
             preview_columns = [
@@ -326,7 +327,7 @@ elif page == "🗓️ Initialize Month":
             else:
                 st.dataframe(preview_df,width="stretch",hide_index=True)
 
-            st.caption("Only flats with Previous Dues or Balance Advance are shown for verification.")
+            st.caption("Only flats with Previous Dues, Adjustment, or Balance Advance are shown for verification.")
             st.info(
                 f"""
                 Flats : {len(new_month_df)}

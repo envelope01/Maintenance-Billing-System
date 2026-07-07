@@ -1,5 +1,39 @@
 import pandas as pd
 
+RECURRING_CHARGE_COLUMNS = [
+    "Service M Chrg.",
+    "Sinking Fund",
+    "Repair & Maintenance",
+    "Edu.",
+    "NOC Charges",
+    "Parking Charges",
+]
+
+GOOGLE_FORMULA_COLUMNS = [
+    "Regular Dues",
+    "Current Bill Amt",
+    "Total Dues",
+]
+
+
+def _number_series(df, column, default=0):
+    if column not in df.columns:
+        return pd.Series(default, index=df.index, dtype="float64")
+
+    values = df[column].astype(str).str.replace(",", "", regex=False).str.strip()
+
+    return pd.to_numeric(values, errors="coerce").fillna(default)
+
+
+def _clean_money_series(values):
+    values = values.round(2)
+
+    if values.empty or ((values % 1).abs() < 0.000001).all():
+        return values.astype("int64")
+
+    return values
+
+
 def get_next_month(statement_month):
     current = pd.to_datetime(statement_month,dayfirst=True)
     next_month = current + pd.DateOffset(months=1)
@@ -42,8 +76,10 @@ def validate_initialization(current_month_df, ledger_df, next_month):
 
 def prepare_new_month_dataframe(current_month_df, next_month):
     """
-    Prepare next month's ledger using only Settlement
-    to populate carry-forward values, and calculate dues for preview.
+    Prepare next month's ledger from the closing balance of the current month.
+
+    Settlement is stored as a net balance at month end:
+    positive = excess paid, zero = fully settled, negative = unpaid amount.
     """
     current_month_df = current_month_df.copy()
 
@@ -56,17 +92,35 @@ def prepare_new_month_dataframe(current_month_df, next_month):
     df = current_month_df.copy()
 
     # -----------------------------
-    # 1. Carry Forward (FIXED LOGIC)
-    # Isko sort karne se PEHLE run karna zaroori hai!
+    # Closing balance from current month
     # -----------------------------
-    settlement = pd.to_numeric(df["Settlement"], errors="coerce").fillna(0)
-    df["Previous dues"] = settlement.where(settlement < 0, 0).abs()
-    df["Adjustment"] = settlement.where(settlement > 0, 0)
+    settlement = _number_series(df, "Settlement")
+    current_balance_advance = _number_series(df, "Balance Advance")
+
+    unpaid_from_previous_month = (-settlement).clip(lower=0)
+    available_advance = current_balance_advance + settlement.clip(lower=0)
 
     # -----------------------------
-    # Next Month
+    # Reset month-specific fields before calculating the next month's credit use.
     # -----------------------------
-    df["Month & Year"] = next_month
+    df["Other"] = 0
+    df["Extra Charges"] = ""
+    df["Late Chrg / Penalty"] = 0
+    df["Status"] = ""
+    df["Settlement"] = 0
+
+    gross_current_bill = pd.Series(0, index=df.index, dtype="float64")
+    for column in RECURRING_CHARGE_COLUMNS:
+        gross_current_bill += _number_series(df, column)
+
+    adjustment = pd.concat(
+        [available_advance, gross_current_bill],
+        axis=1
+    ).min(axis=1)
+
+    df["Previous dues"] = _clean_money_series(unpaid_from_previous_month)
+    df["Adjustment"] = _clean_money_series(adjustment)
+    df["Balance Advance"] = _clean_money_series(available_advance - adjustment)
 
     # -----------------------------
     # Bill Number Setup & Sorting
@@ -79,45 +133,15 @@ def prepare_new_month_dataframe(current_month_df, next_month):
     df["Bill No"] = range(last_bill + 1, last_bill + 1 + len(df))
 
     # -----------------------------
-    # Reset Monthly Fields
+    # Next Month
     # -----------------------------
-    df["Other"] = 0
-    df["Extra Charges"] = ""
-    df["Late Chrg / Penalty"] = 0
-    df["Status"] = ""
-    df["Settlement"] = 0  # Ab isko 0 kar sakte hain
+    df["Month & Year"] = next_month
 
     # -----------------------------
-    # Calculations for Preview
+    # Google Sheets owns these calculations.
     # -----------------------------
-    df["Service M Chrg."] = pd.to_numeric(df.get("Service M Chrg.", 0), errors="coerce").fillna(0)
-    df["Sinking Fund"] = pd.to_numeric(df.get("Sinking Fund", 0), errors="coerce").fillna(0)
-    df["Repair & Maintenance"] = pd.to_numeric(df.get("Repair & Maintenance", 0), errors="coerce").fillna(0)
-    df["Edu."] = pd.to_numeric(df.get("Edu.", 0), errors="coerce").fillna(0)
-    df["NOC Charges"] = pd.to_numeric(df.get("NOC Charges", 0), errors="coerce").fillna(0)
-    df["Parking Charges"] = pd.to_numeric(df.get("Parking Charges", 0), errors="coerce").fillna(0)
-    
-    df["Regular Dues"] = (
-        df["Service M Chrg."]
-        + df["Sinking Fund"]
-        + df["Repair & Maintenance"]
-        + df["Edu."]
-        + df["NOC Charges"]
-        + df["Parking Charges"]
-    )
-
-    df["Total Dues"] = (
-        df["Regular Dues"]
-        + df["Previous dues"]
-        + df["Late Chrg / Penalty"]
-        - df["Adjustment"]
-    )
-
-    df["Current Bill Amt"] = (
-        df["Regular Dues"]
-        + df["Other"]
-    )
-
-    df["Balance Advance"] = 0
+    for column in GOOGLE_FORMULA_COLUMNS:
+        if column in df.columns:
+            df[column] = ""
 
     return df
