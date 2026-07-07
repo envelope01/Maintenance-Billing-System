@@ -1,3 +1,6 @@
+import base64
+from pathlib import Path
+
 import pandas as pd
 import streamlit as st
 from streamlit_gsheets import GSheetsConnection
@@ -69,13 +72,26 @@ except Exception as e:
 # --------------------------------------------------
 # Sidebar Navigation (Replaces Tabs)
 # --------------------------------------------------
+try:
+    logo_base64 = base64.b64encode(Path("assets/ibldg icon.png").read_bytes()).decode("utf-8")
+    st.sidebar.markdown(
+        f"""
+        <div class="sidebar-logo">
+            <img src="data:image/png;base64,{logo_base64}" alt="IBLDG logo">
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+except FileNotFoundError:
+    pass
+
 st.sidebar.title("🏢 Menu")
 st.sidebar.caption("Society Maintenance Management")
 st.sidebar.divider()
 
 page = st.sidebar.radio(
     "Navigation",
-    ["📄 Generate Bills", "💳 Payment Tracker", "🗓️ Initialize Month"],
+    ["💳 Payment Tracker", "🗓️ Initialize Month", "📄 Generate Bills"],
     label_visibility="collapsed"
 )
 
