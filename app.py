@@ -296,10 +296,44 @@ elif page == "🗓️ Initialize Month":
             st.session_state.new_month_df = new_month_df
 
             st.divider()
+            print(new_month_df.columns.tolist())
+            preview_df = new_month_df.copy()
+
+            preview_df = preview_df.merge(
+                master_df[["Room No", "Name"]],
+                on="Room No",
+                how="left"
+            )
+            
+            preview_df = preview_df[
+                (preview_df["Previous dues"] > 0)
+                | (preview_df["Balance Advance"] > 0)
+            ]
+
+            preview_columns = [
+                "Room No",
+                "Name",
+                "Previous dues",
+                "Adjustment",
+                "Balance Advance",
+            ]
+
+            preview_df = preview_df[preview_columns]
             st.subheader("Next Month Preview")
-            # CHANGED: use_container_width -> width="stretch"
-            st.dataframe(new_month_df, width="stretch", hide_index=True)
-            st.caption("Please review the preview before initializing the next billing month.")
+
+            if preview_df.empty:
+                st.success("No carry-forward balances found.")
+            else:
+                st.dataframe(preview_df,width="stretch",hide_index=True)
+
+            st.caption("Only flats with Previous Dues or Balance Advance are shown for verification.")
+            st.info(
+                f"""
+                Flats : {len(new_month_df)}
+
+                Carry Forward : {len(preview_df)}
+                """
+            )
 
             if st.button("🚀 Initialize Month", type="primary"):
                 append_to_ledger(st.session_state.new_month_df)
