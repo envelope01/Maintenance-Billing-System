@@ -7,8 +7,6 @@ import pandas as pd
 
 from docxtpl import DocxTemplate
 
-from pypdf import PdfMerger
-
 from utils.config import MAPPING
 from utils.helpers import get_billing_dates, format_amount
 from utils.converter import convert_docx_to_pdf, detect_pdf_engine
@@ -17,20 +15,28 @@ import fitz
 
 
 def merge_bill_pdfs(pdf_paths):
-    merger = PdfMerger()
+    output_doc = fitz.open()
 
     try:
         for pdf_path in pdf_paths:
-            merger.append(pdf_path)
+            src = fitz.open(pdf_path)
 
-        output_pdf = io.BytesIO()
-        merger.write(output_pdf)
+            try:
+                output_doc.insert_pdf(src)
+            finally:
+                src.close()
+
+        pdf_bytes = output_doc.tobytes(
+            garbage=4,
+            deflate=True
+        )
+
+        output_pdf = io.BytesIO(pdf_bytes)
         output_pdf.seek(0)
-
         return output_pdf
 
     finally:
-        merger.close()
+        output_doc.close()
 
 
 

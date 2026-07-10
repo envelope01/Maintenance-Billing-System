@@ -312,7 +312,6 @@ elif page == "🗓️ Initialize Month":
             st.session_state.new_month_df = new_month_df
 
             st.divider()
-            print(new_month_df.columns.tolist())
             preview_df = new_month_df.copy()
 
             preview_df = preview_df.merge(

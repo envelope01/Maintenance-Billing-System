@@ -3,6 +3,5 @@ numpy
 pandas
 pdfplumber
 PyMuPDF
-pypdf==5.1.0
 st_gsheets_connection
 streamlit
