@@ -64,7 +64,7 @@ for key, value in DEFAULT_STATE.items():
 try:
     conn = st.connection("gsheets", type=GSheetsConnection)
     master_df = conn.read(worksheet="Master_Flats", ttl=0)
-    ledger_df = conn.read(worksheet="testData", ttl=0)
+    ledger_df = conn.read(worksheet="Yearly_Ledger", ttl=0)
 except Exception as e:
     st.error(f"Google Sheets Connection Failed\n\n{e}")
     st.stop()
@@ -85,7 +85,7 @@ try:
 except FileNotFoundError:
     pass
 
-st.sidebar.title("🏢 Menu")
+st.sidebar.subheader("🏢 I Building Deep City")
 st.sidebar.caption("Society Maintenance Management")
 st.sidebar.divider()
 
@@ -261,7 +261,7 @@ elif page == "🗓️ Initialize Month":
 
     st.write("")
     if st.button("Validate", type="primary"):
-        latest_ledger_df = conn.read(worksheet="testData", ttl=0)
+        latest_ledger_df = conn.read(worksheet="Yearly_Ledger", ttl=0)
         latest_ledger_df.columns = latest_ledger_df.columns.str.strip()
 
         current_month_df = latest_ledger_df[
@@ -284,7 +284,7 @@ elif page == "🗓️ Initialize Month":
         st.divider()
 
         if not validation["current_month_exists"]:
-            st.error("Current month does not exist in testData.")
+            st.error("Current month does not exist in Yearly_Ledger.")
         if validation["blank_status"] > 0:
             st.error(f"{validation['blank_status']} flats have blank status.")
         if validation["month_exists"]:

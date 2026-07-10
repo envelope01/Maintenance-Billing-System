@@ -1,6 +1,102 @@
+import re
+
 import pdfplumber
 import pandas as pd
 import numpy as np
+
+MIN_PARTIAL_MATCH_LENGTH = 3
+INVALID_MAPPING_VALUES = {"", "NAN", "NONE"}
+
+
+def _normalize_identifier(value):
+    """
+    Normalize bank identifiers for matching.
+
+    Spaces, punctuation, and casing are ignored because bank descriptions often
+    add separators or remove spaces from names.
+    """
+    return re.sub(r"[^A-Z0-9]", "", str(value).upper())
+
+
+def _split_mapping_ids(bank_mapping_id):
+    raw_value = str(bank_mapping_id).strip()
+
+    if raw_value.upper() in INVALID_MAPPING_VALUES or "#N/A" in raw_value.upper():
+        return []
+
+    mapping_ids = []
+
+    for value in raw_value.split(","):
+        value = value.strip()
+        normalized_value = _normalize_identifier(value)
+
+        if (
+            value.upper() in INVALID_MAPPING_VALUES
+            or "#N/A" in value.upper()
+            or not normalized_value
+        ):
+            continue
+
+        mapping_ids.append(
+            {
+                "raw": value,
+                "normalized": normalized_value,
+            }
+        )
+
+    return mapping_ids
+
+
+def _description_candidates(description):
+    text = str(description).upper().replace("\n", " ").replace("\r", " ")
+    tokens = [
+        _normalize_identifier(token)
+        for token in re.split(r"[^A-Z0-9]+", text)
+    ]
+
+    candidates = {
+        token
+        for token in tokens
+        if token
+    }
+
+    compact_description = _normalize_identifier(text)
+    if compact_description:
+        candidates.add(compact_description)
+
+    return compact_description, candidates
+
+
+def _get_match_score(mapping_id, compact_description, description_candidates):
+    target = mapping_id["normalized"]
+
+    if not target or not compact_description:
+        return None
+
+    if target in description_candidates:
+        return 1000 + len(target)
+
+    if len(target) >= MIN_PARTIAL_MATCH_LENGTH and target in compact_description:
+        return 800 + len(target)
+
+    best_score = None
+
+    for candidate in description_candidates:
+        if candidate == target:
+            return 1000 + len(target)
+
+        if (
+            len(candidate) >= MIN_PARTIAL_MATCH_LENGTH
+            and candidate in target
+        ):
+            best_score = max(best_score or 0, 600 + len(candidate))
+
+    for prefix_length in range(len(target) - 1, MIN_PARTIAL_MATCH_LENGTH - 1, -1):
+        if target[:prefix_length] in compact_description:
+            best_score = max(best_score or 0, 700 + prefix_length)
+            break
+
+    return best_score
 
 def extract_bank_statement(pdf_file):
     all_rows = []
@@ -58,22 +154,22 @@ def map_bank_to_rooms(raw_bank_df, master_df):
 
     master_df.columns = master_df.columns.str.strip()
 
-    master_df["Bank_Mapping_ID"] = (master_df["Bank_Mapping_ID"].astype(str).str.upper().str.strip())
-
     master_df["Room No"] = (master_df["Room No"].astype(str).str.strip())
 
     # -----------------------------
-    # Create Mapping Dictionary
+    # Create Mapping Entries
     # -----------------------------
-    mapping_dict = {}
+    mapping_entries = []
 
     for _, row in master_df.iterrows():
 
-        bank_id = row["Bank_Mapping_ID"]
-        if (bank_id in ["", "NAN", "NONE"]or "#N/A" in bank_id):
-            continue
-        
-        mapping_dict[bank_id] = row["Room No"]
+        for mapping_id in _split_mapping_ids(row.get("Bank_Mapping_ID", "")):
+            mapping_entries.append(
+                {
+                    "room": row["Room No"],
+                    **mapping_id,
+                }
+            )
 
 
     # -----------------------------
@@ -81,12 +177,32 @@ def map_bank_to_rooms(raw_bank_df, master_df):
     # -----------------------------
     def find_room(description):
 
-        desc = (str(description).upper().replace("\n", " ").replace("\r", " "))
-        desc = " ".join(desc.split())
+        compact_description, candidates = _description_candidates(description)
+        matches = []
 
-        for bank_id, room in mapping_dict.items():
-            if bank_id in desc:
-                return room
+        for mapping_id in mapping_entries:
+            score = _get_match_score(mapping_id, compact_description, candidates)
+
+            if score is not None:
+                matches.append(
+                    {
+                        "score": score,
+                        "room": mapping_id["room"],
+                    }
+                )
+
+        if not matches:
+            return np.nan
+
+        best_score = max(match["score"] for match in matches)
+        best_rooms = {
+            match["room"]
+            for match in matches
+            if match["score"] == best_score
+        }
+
+        if len(best_rooms) == 1:
+            return next(iter(best_rooms))
 
         return np.nan
 

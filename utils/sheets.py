@@ -21,7 +21,7 @@ def append_to_ledger(new_month_df):
     gc = get_gspread_client()
 
     spreadsheet = gc.open_by_url(st.secrets["connections"]["gsheets"]["spreadsheet"])
-    worksheet = spreadsheet.worksheet("testData")
+    worksheet = spreadsheet.worksheet("Yearly_Ledger")
 
     sheet_df = new_month_df.copy()
 
@@ -47,7 +47,7 @@ def update_status_to_sheet(report_df, statement_month):
 
     spreadsheet = gc.open_by_url(st.secrets["connections"]["gsheets"]["spreadsheet"])
 
-    worksheet = spreadsheet.worksheet("testData")
+    worksheet = spreadsheet.worksheet("Yearly_Ledger")
 
     data = worksheet.get_all_values()
 
