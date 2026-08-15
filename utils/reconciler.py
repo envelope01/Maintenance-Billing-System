@@ -1,11 +1,27 @@
 import re
+from difflib import SequenceMatcher
 
 import pdfplumber
 import pandas as pd
 import numpy as np
 
-MIN_PARTIAL_MATCH_LENGTH = 3
 INVALID_MAPPING_VALUES = {"", "NAN", "NONE"}
+BANK_DATE_PATTERN = re.compile(r"\b\d{2}-[A-Za-z]{3}-\d{4}\b")
+ROW_START_DATE_PATTERN = re.compile(r"^\s*\d{2}-[A-Za-z]{3}-\d{4}\b")
+AMOUNT_PATTERN = re.compile(
+    r"(?<![A-Z0-9])-?\d{1,3}(?:,\d{3})+(?:\.\d+)?|(?<![A-Z0-9])-?\d+\.\d+"
+)
+CREDIT_KEYWORDS = (
+    "/CR/",
+    "IMPSNPC",
+    "CREDIT",
+)
+STATEMENT_TOTAL_PATTERN = re.compile(
+    r"Total\s+Debits\s*\(\d+\)\s+and\s+Credits\s*\(\d+\)\s*:\s*"
+    r"-?\d{1,3}(?:,\d{3})*(?:\.\d+)?\s+"
+    r"(?P<credit>\d{1,3}(?:,\d{3})*(?:\.\d+)?)",
+    re.IGNORECASE,
+)
 
 
 def _normalize_identifier(value):
@@ -76,72 +92,235 @@ def _get_match_score(mapping_id, compact_description, description_candidates):
     if target in description_candidates:
         return 1000 + len(target)
 
-    if len(target) >= MIN_PARTIAL_MATCH_LENGTH and target in compact_description:
-        return 800 + len(target)
+    if target in compact_description:
+        return 1000 + len(target)
 
-    best_score = None
+    return None
 
-    for candidate in description_candidates:
-        if candidate == target:
-            return 1000 + len(target)
 
-        if (
-            len(candidate) >= MIN_PARTIAL_MATCH_LENGTH
-            and candidate in target
-        ):
-            best_score = max(best_score or 0, 600 + len(candidate))
+def _clean_amount(value):
+    value = str(value).replace(",", "").strip()
+    return pd.to_numeric(value, errors="coerce")
 
-    for prefix_length in range(len(target) - 1, MIN_PARTIAL_MATCH_LENGTH - 1, -1):
-        if target[:prefix_length] in compact_description:
-            best_score = max(best_score or 0, 700 + prefix_length)
-            break
 
-    return best_score
+def _find_column(columns, required_words, optional_words=None):
+    optional_words = optional_words or []
+
+    for column in columns:
+        normalized_column = str(column).strip().lower()
+
+        if all(word in normalized_column for word in required_words):
+            return column
+
+    for column in columns:
+        normalized_column = str(column).strip().lower()
+
+        if any(word in normalized_column for word in optional_words):
+            return column
+
+    return None
+
+
+def _table_rows_to_dataframe(all_rows):
+    if not all_rows:
+        return pd.DataFrame(columns=["Value Date", "Description", "Credit", "Reference No"])
+
+    df = pd.DataFrame(all_rows)
+    df.columns = df.iloc[0]
+    df = df[1:].reset_index(drop=True)
+    df.columns = df.columns.map(lambda value: str(value).strip())
+
+    first_column = df.columns[0]
+    df = df[df.iloc[:, 0].astype(str).str.strip() != str(first_column).strip()].reset_index(drop=True)
+
+    value_date_col = _find_column(df.columns, ["value", "date"])
+    description_col = _find_column(df.columns, ["description"], optional_words=["particular", "narration"])
+    credit_col = _find_column(df.columns, ["credit"])
+    reference_col = _find_column(df.columns, ["ref"], optional_words=["cheque", "utr"])
+
+    if description_col is None or credit_col is None:
+        return pd.DataFrame(columns=["Value Date", "Description", "Credit", "Reference No"])
+
+    result = pd.DataFrame()
+    result["Value Date"] = df[value_date_col] if value_date_col is not None else ""
+    result["Description"] = df[description_col]
+    result["Credit"] = df[credit_col]
+    result["Reference No"] = df[reference_col] if reference_col is not None else ""
+
+    return result
+
+
+def _looks_like_credit_transaction(text):
+    normalized_text = f" {str(text).upper()} "
+
+    return any(keyword in normalized_text for keyword in CREDIT_KEYWORDS)
+
+
+def _extract_reference_no(text):
+    match = re.search(r"\b\d{10,18}\b", str(text))
+
+    if not match:
+        return ""
+
+    return match.group(0)
+
+
+def _parse_text_transaction_block(block_lines):
+    text = " ".join(str(line).strip() for line in block_lines if str(line).strip())
+    upper_text = text.upper()
+
+    if "TOTAL DEBITS" in upper_text or "OPENING BALANCE" in upper_text:
+        return None
+
+    if not _looks_like_credit_transaction(text):
+        return None
+
+    dates = BANK_DATE_PATTERN.findall(text)
+    amounts = AMOUNT_PATTERN.findall(text)
+
+    if not dates or len(amounts) < 2:
+        return None
+
+    return {
+        "Value Date": dates[1] if len(dates) > 1 else dates[0],
+        "Description": re.sub(ROW_START_DATE_PATTERN, "", text).strip(),
+        "Credit": amounts[-2],
+        "Reference No": _extract_reference_no(text),
+    }
+
+
+def _extract_text_credit_rows(pdf):
+    rows = []
+
+    for page in pdf.pages:
+        text = page.extract_text(x_tolerance=1, y_tolerance=3) or ""
+        lines = [line.strip() for line in text.splitlines() if line.strip()]
+        current_block = []
+
+        for line in lines:
+            if ROW_START_DATE_PATTERN.match(line):
+                if current_block:
+                    row = _parse_text_transaction_block(current_block)
+                    if row is not None:
+                        rows.append(row)
+
+                current_block = [line]
+            elif current_block:
+                current_block.append(line)
+
+        if current_block:
+            row = _parse_text_transaction_block(current_block)
+            if row is not None:
+                rows.append(row)
+
+    return pd.DataFrame(rows, columns=["Value Date", "Description", "Credit", "Reference No"])
+
+
+def _extract_statement_credit_total(pdf):
+    for page in pdf.pages:
+        text = page.extract_text(x_tolerance=1, y_tolerance=3) or ""
+        match = STATEMENT_TOTAL_PATTERN.search(text)
+
+        if match:
+            return _clean_amount(match.group("credit"))
+
+    return None
+
+
+def _same_payment(row, selected_row):
+    if (
+        row["Value Date"] != selected_row["Value Date"]
+        or row["_credit_key"] != selected_row["_credit_key"]
+    ):
+        return False
+
+    if row["Reference No"] and row["Reference No"] == selected_row["Reference No"]:
+        return True
+
+    row_desc = row["_desc_key"]
+    selected_desc = selected_row["_desc_key"]
+
+    if not row_desc or not selected_desc:
+        return False
+
+    if row_desc in selected_desc or selected_desc in row_desc:
+        return True
+
+    return SequenceMatcher(None, row_desc, selected_desc).ratio() >= 0.90
+
+
+def _dedupe_payments(df):
+    df = df.copy()
+    if "_source" not in df.columns:
+        df["_source"] = "table"
+
+    df["Reference No"] = df["Reference No"].fillna("").astype(str).str.strip()
+    df["Description"] = df["Description"].fillna("").astype(str).str.strip()
+    df["Value Date"] = df["Value Date"].fillna("").astype(str).str.strip()
+    df["_source"] = df["_source"].fillna("table").astype(str)
+    df["Credit"] = df["Credit"].apply(_clean_amount).fillna(0)
+
+    df = df[df["Credit"] > 0].copy()
+    df = df[
+        df["Description"].ne("")
+        & df["Value Date"].str.fullmatch(BANK_DATE_PATTERN)
+    ].copy()
+
+    df["_desc_key"] = df["Description"].apply(_normalize_identifier)
+    df["_credit_key"] = df["Credit"].round(2)
+
+    source_priority = {
+        "table": 0,
+        "text": 1,
+    }
+    df["_source_priority"] = df["_source"].map(source_priority).fillna(1)
+    df = df.sort_values(["_source_priority"]).reset_index(drop=True)
+
+    selected_rows = []
+
+    for _, row in df.iterrows():
+        if any(_same_payment(row, selected_row) for selected_row in selected_rows):
+            continue
+
+        selected_rows.append(row)
+
+    if not selected_rows:
+        return pd.DataFrame(columns=["Value Date", "Description", "Credit", "Reference No"])
+
+    result = pd.DataFrame(selected_rows)
+    result = result.drop(columns=["_desc_key", "_credit_key", "_source_priority", "_source"])
+
+    return result.reset_index(drop=True)
 
 def extract_bank_statement(pdf_file):
     all_rows = []
     pdf_file.seek(0)
     
-    # 1. Extract tables using your logic
+    # 1. Extract tables and add a text fallback for rows missed at page breaks.
     with pdfplumber.open(pdf_file) as pdf:
         for page in pdf.pages:
             table_data = page.extract_table()
             if table_data:
                 all_rows.extend(table_data)
 
-    # 2. Convert to DataFrame
-    if not all_rows:
+        table_df = _table_rows_to_dataframe(all_rows)
+        text_df = _extract_text_credit_rows(pdf)
+        statement_credit_total = _extract_statement_credit_total(pdf)
+
+    table_df["_source"] = "table"
+    text_df["_source"] = "text"
+    df = pd.concat([table_df, text_df], ignore_index=True)
+
+    if df.empty:
         raise ValueError("No transaction table found in the uploaded statement.")
-    
-    df = pd.DataFrame(all_rows)
 
-    # 3. Promote header
-    df.columns = df.iloc[0]
-    df = df[1:].reset_index(drop=True)
+    valid_payments = _dedupe_payments(df)
+    result = valid_payments[["Value Date", "Description", "Credit", "Reference No"]].copy()
 
-    # 4. Filter duplicate headers
-    df = df[df.iloc[:, 0] != df.columns[0]].reset_index(drop=True)
-    
-    # ----------------------------------------------------
-    # DATA CLEANING: Strict column formatting
-    # ----------------------------------------------------
-    # Remove extra spaces from column names
-    df.columns = df.columns.str.strip()
-    
-    # Keep only necessary columns (avoiding KeyErrors if extra spaces exist)
-    target_cols = ['Value Date', 'Description', 'Credit']
-    available_cols = [c for c in df.columns if c in target_cols]
-    df = df[available_cols].copy()
+    if statement_credit_total is not None and not pd.isna(statement_credit_total):
+        result.attrs["statement_credit_total"] = float(statement_credit_total)
 
-    # Clean Credit column: Remove commas, convert to numeric, replace blank/nan with 0
-    df['Credit'] = df['Credit'].astype(str).str.replace(',', '', regex=False)
-    df['Credit'] = pd.to_numeric(df['Credit'], errors='coerce').fillna(0)
-
-    # Filter out rows where Credit is 0 (we only care about money received)
-    valid_payments = df[df['Credit'] > 0].copy()
-    valid_payments = valid_payments.dropna(subset=["Description","Value Date"])
-    
-    return valid_payments
+    return result
 
 
 

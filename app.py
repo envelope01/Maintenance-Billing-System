@@ -201,7 +201,13 @@ elif page == "💳 Payment Tracker":
         partial = (report_df["Status"] == "Partially Paid").sum()
         unpaid = (report_df["Status"] == "Unpaid").sum()
 
-        total_credit = raw_bank_df["Credit"].sum()
+        extracted_credit = raw_bank_df["Credit"].sum()
+        statement_credit_total = raw_bank_df.attrs.get("statement_credit_total")
+        total_credit = (
+            statement_credit_total
+            if statement_credit_total is not None
+            else extracted_credit
+        )
         matched_credit = grouped_payments["Total_Paid"].sum()
         unmatched_credit = unmapped_df["Credit"].sum()
 
@@ -220,6 +226,12 @@ elif page == "💳 Payment Tracker":
         col4.metric("Total Credits", f"₹{total_credit:,.0f}")
         col5.metric("Matched Credits", f"₹{matched_credit:,.0f}")
         col6.metric("Unmatched Credits", f"₹{unmatched_credit:,.0f}")
+
+        if abs(extracted_credit - total_credit) > 0.01:
+            st.warning(
+                "Extracted transaction total does not match the bank statement total. "
+                "Review unmatched transactions before updating Google Sheets."
+            )
 
         st.divider()
         st.subheader("Reconciliation Report")
